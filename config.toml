@@ -1,0 +1,29 @@
+
+# Output directory name
+output = "./output"
+
+# Misc
+CUDA_NO = 1
+
+[input_files]
+Xp_path = "./data/xp_2D_10-50.pkl"
+Xn_path = "./data/xn_2D_10-50.pkl"
+yp_path = "./data/yp_2D_10-50.pkl"
+yn_path = "./data/yn_2D_10-50.pkl"
+vocab_path = "./data/vocab_2D_10-50_complete.pkl"
+
+[table_prep_params]
+MAX_COL_LEN = 10
+MAX_ROW_LEN = 50
+SAMPLE_PERC = 0.5
+LENGTH_PER_CELL = 20
+
+[model_params]
+seed = 42
+batch_size = 64
+embedding_dim = 100
+epochs = 25
+otp_lr = 3e-6
+model_name = "model.pt"
+
+
