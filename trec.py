@@ -1,96 +1,166 @@
+from pandarallel import pandarallel
 import numpy as np
 import pandas as pd
 import os
 import torch
-from preprocess import loadpkl, print_table, savepkl, split_overflow_table, tokenize_table, read_table, tokenize_cell
 from multiprocessing import Pool
 from sklearn.metrics.pairwise import cosine_similarity
-import pickle
-from pandarallel import pandarallel
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split, KFold
 
-pandarallel.initialize(progress_bar=True, nb_workers=15, shm_size_mb=3000)
+from preprocess import loadpkl, tokenize_table, read_table, tokenize_cell
+import utils
 
-
-def get_emb(table):
-    table_ = table[:]
-    for row in table_:
-        for j, cell in enumerate(row):
-            for i, item in enumerate(cell):
-                cell[i] = embeddings[w2i[item]]
-            row[j] = np.average(row[j], axis=0).tolist()
-    return table_
+pandarallel.initialize(progress_bar=True, nb_workers=20, shm_size_mb=3000)
 
 
-def late_fusion(table, query):
-    s = []
-    for i in query:
-        for j in table:
-            sim = cosine_similarity(i.reshape(1, -1), j.reshape(1, -1))
-            s.append(sim)
-    s = np.array(s).reshape(-1)
-    return s
+class TREC_data_prep():
+
+    def __init__(self, model, vocab):
+        self.w2i = {w: i for i, w in enumerate(vocab)}
+        self.embeddings = model['embeddings.weight'].cpu().data.numpy()
+
+    def get_emb(self, table):
+        if len(table) == 0:
+            return [self.embeddings[self.w2i['<PAD>']]]
+        for row in table:
+            for j, cell in enumerate(row):
+                if len(row[j]) == 0:
+                    row[j].append('<PAD>')
+                for i, item in enumerate(cell):
+                    cell[i] = self.embeddings[self.w2i[item]]
+                row[j] = np.average(row[j], axis=0).tolist()
+        x = np.array(table)
+        shape = x.shape
+        table = x.reshape(shape[0]*shape[1], shape[2])
+        return table.tolist()
+
+    def late_fusion(self, table, query):
+        s = []
+        for i in query:
+            for j in table:
+                i = np.array(i)
+                j = np.array(j)
+                sim = cosine_similarity(i.reshape(1, -1), j.reshape(1, -1))
+                s.append(sim)
+        s = np.array(s).reshape(-1)
+        return s
+
+    def early_fusion(self, table, query):
+        a = np.average(table, axis=0).reshape(1, -1)
+        b = np.average(query, axis=0).reshape(1, -1)
+        sim = cosine_similarity(a, b)
+        return sim.reshape(-1)[0]
+
+    def mp(self, df, func, num_partitions):
+        df_split = np.array_split(df, num_partitions)
+        pool = Pool(num_partitions)
+        df = pd.concat(pool.map(func, df_split))
+        pool.close()
+        pool.join()
+        return df
+
+    def pipeline(self, baseline_f):
+        baseline_f['table_emb'] = baseline_f.table_id.apply(
+            lambda x: self.get_emb(tokenize_table(read_table(x)['data'])))
+        # baseline_f['query_tkn'] = baseline_f['query'].apply(
+        #     lambda x: tokenize_cell(x))
+        baseline_f['query_emb'] = baseline_f['query'].apply(
+            lambda x: [self.embeddings[self.w2i[item]] for item in tokenize_cell(x)])
+
+        baseline_f['early_fusion'] = baseline_f.apply(
+            lambda x: self.early_fusion(x['table_emb'], x['query_emb']), axis=1)
+        baseline_f['late_fusion'] = baseline_f.apply(
+            lambda x: self.late_fusion(x['table_emb'], x['query_emb']), axis=1)
+
+        baseline_f['late_fusion_max'] = baseline_f.late_fusion.apply(
+            np.max)
+        baseline_f['late_fusion_avg'] = baseline_f.late_fusion.apply(
+            np.average)
+        baseline_f['late_fusion_sum'] = baseline_f.late_fusion.apply(
+            np.sum)
+        return baseline_f
 
 
-def early_fusion(table, query):
-    a = np.average(table, axis=0).reshape(1, -1)
-    b = np.average(query, axis=0).reshape(1, -1)
-    sim = cosine_similarity(a, b)
-    return sim.reshape(-1)[0]
+class TREC_model():
+    def __init__(self, data, output_dir, config):
+        self.data = data
+        self.config = config
+        self.file_path = os.path.join(output_dir, config['trec']['file_name'])
+        self.prep_data()
+        utils.make_dirs(output_dir)
 
+    def prep_data(self):
+        x_bf = ['row', 'col', 'nul', 'in_link', 'out_link', 'pgcount', 'tImp', 'tPF', 'leftColhits', 'SecColhits', 'bodyhits', 'PMI', 'qInPgTitle', 'qInTableTitle', 'yRank', 'csr_score', 'idf1',
+                'idf2', 'idf3', 'idf4', 'idf5', 'idf6', 'max', 'sum', 'avg', 'sim', 'emax', 'esum', 'eavg', 'esim', 'cmax', 'csum', 'cavg', 'csim', 'remax', 'resum', 'reavg', 'resim', 'query_l']
+        x_smf = ['early_fusion', 'late_fusion_max',
+                 'late_fusion_avg', 'late_fusion_sum']
+        x_f = x_bf
+        y_f = ['rel']
+        if self.config['trec']['semantic_f']:
+            x_f += x_smf
 
-def mp(df, func, num_partitions):
-    df_split = np.array_split(df, num_partitions)
-    pool = Pool(num_partitions)
-    df = pd.concat(pool.map(func, df_split))
-    pool.close()
-    pool.join()
-    return df
+        self.X = self.data[x_f]
+        self.y = self.data[y_f]
 
+    def train(self):
+        kfold = KFold(5, True, 42)
 
-def t(df):
-    df['table_emb'] = df.table_id.apply(
-        lambda x: get_emb(tokenize_table(read_table(x)['data'])))
-    return df
+        for i, indices in enumerate(kfold.split(self.X)):
+            train_idx, test_idx = indices
+            X_train, X_test, y_train, y_test = self.X.iloc[train_idx], self.X.iloc[
+                test_idx], self.y.iloc[train_idx], self.y.iloc[test_idx]
+            df = self.makeModel_getdf(X_train, X_test, y_train, y_test)
+            df.to_csv(f"{self.file_path}{i}.txt",
+                      sep=' ', index=False, header=False)
+
+    def makeModel_getdf(self, X_train, X_test, y_train, y_test):
+        self.clf = RandomForestClassifier(
+            n_estimators=1000, max_features=3, random_state=42)
+        self.clf.fit(X_train, y_train.values.ravel())
+        X_test['model_score'] = X_test.parallel_apply(
+            lambda x: self.getScore(x), axis=1)
+        df = self.generate_trec_df(self.generate_filtered_df(X_test, y_test))
+        return df
+
+    def getScore(self, row):
+        arr = self.clf.predict_proba(np.array(row).reshape(1, -1))
+        return arr[0][1]+2*arr[0][2]
+
+    def generate_filtered_df(self, X, y):
+        df = pd.concat([
+            self.data.iloc[list(X.index)][['query_id', 'query', 'table_id']],
+            X['model_score']], axis=1)
+        return df
+
+    def generate_trec_df(self, df):
+        l = []
+        dic = dict(df.query_id.value_counts())
+        for i in dic:
+            for j in range(1, dic[i]+1):
+                l.append(j)
+
+        df_temp = pd.DataFrame()
+        df_temp['query_id'] = df['query_id']
+        df_temp['Q0'] = 'Q0'
+        df_temp['table_id'] = df['table_id']
+        df_temp['rank'] = l
+        df_temp['score'] = df['model_score']
+        df_temp['smarttable'] = 'smarttable'
+        return df_temp
 
 
 if __name__ == '__main__':
-
-    # X = loadpkl('./data/xp_2D_10-50.pkl')
     vocab = loadpkl('./data/vocab_2D_10-50_complete.pkl')
-
-    w2i = {w: i for i, w in enumerate(vocab)}
-
     model = torch.load('./output/11_25_15_56_30/model.pt')
-    embeddings = model['embeddings.weight'].cpu().data.numpy()
 
-    # pool = Pool(processes=30)
-    # X = pool.map(get_emb, X)
-    # X = np.array(X)
-    # print(np.array(X[0][0][0]).shape)
+    # trec = TREC_data_prep(model=model, vocab=vocab)
+    # baseline_f = pd.read_csv('../global_data/features.csv')
 
-    # savepkl('./data/xp_2D_10-50_emb.pkl', X)
+    # baseline_f = trec.mp(df=baseline_f, func=trec.pipeline, num_partitions=20)
+    # baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)
+    # baseline_f.to_csv('./baseline_f_tq-emb_temp.csv', index=False)
 
-    baseline_f = pd.read_csv('./baseline_f_t-emb.csv')
-    # baseline_f['table'] = baseline_f.table_id.parallel_apply(
-    #     lambda x: tokenize_table(read_table(x)['data']))
-    # baseline_f['table_emb'] = baseline_f.table.parallel_apply(
-    #     lambda x: get_emb(x))
-    print(baseline_f[baseline_f['table_emb'] == 'nan'])
-    baseline_f['table_emb'] = baseline_f.table_emb.apply(eval)
-    baseline_f['query_emb'] = baseline_f.query.apply(
-        lambda x: tokenize_cell(x))
-    print(baseline_f.head())
-    # baseline_f = mp(baseline_f, t, 20)
-    # print(baseline_f.iloc[:2]['table_emb'])
-    # baseline_f.to_csv('./baseline_f_t-emb.csv',index=False)
-    # semantic_f['w2v_early_fusion'] = semantic_f.apply(
-    #     lambda x: early_fusion(x['w2v_embd_table'], x['w2v_embd_query']), axis=1)
-
-    # semantic_f['w2v_late_fusion'] = semantic_f.parallel_apply(
-    #     lambda x: late_fusion(x['w2v_embd_table'], x['w2v_embd_query']), axis=1)
-    # semantic_f['w2v_late_fusion_max'] = semantic_f.w2v_late_fusion.parallel_apply(
-    #     np.max)
-    # semantic_f['w2v_late_fusion_avg'] = semantic_f.w2v_late_fusion.parallel_apply(
-    #     np.average)
-    # semantic_f['w2v_late_fusion_sum'] = semantic_f.w2v_late_fusion.parallel_apply(
-    #     np.sum)
+    df = pd.read_csv('./baseline_f_tq-emb_temp.csv')
+    trec_model = TREC_model(df, True)
+    trec_model.train()

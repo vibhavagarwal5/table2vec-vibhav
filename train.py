@@ -1,6 +1,7 @@
 import time
 import logging
 import numpy as np
+import pandas as pd
 import random
 import os
 import torch
@@ -16,6 +17,8 @@ import utils
 from preprocess import loadpkl
 from dataset import T2VDataset
 from model import Table2Vec
+from trec import TREC_data_prep, TREC_model
+from TREC_score import ndcg_pipeline
 
 logger = logging.getLogger("app")
 
@@ -25,7 +28,7 @@ def fit(model, pos_sample, neg_sample, loss_fn, opt, config, output_dir, writer,
     Xn, yn = neg_sample
     train_writer, test_writer = writer
     epochs = config['model_params']['epochs']
-    model_name = os.path.join(output_dir, config['model_params']['model_name'])
+    model_name = os.path.join(output_dir, config['model_props']['model_name'])
 
     train_writer.add_graph(model, torch.ones(
         [1, 50, 10, 20], dtype=torch.long, device=device))
@@ -59,7 +62,7 @@ def fit(model, pos_sample, neg_sample, loss_fn, opt, config, output_dir, writer,
         train_dataset_n = T2VDataset(Xn_, yn_, vocab, device, config)
         train_dataset = ConcatDataset([train_dataset_p, train_dataset_n])
         # logger.info(f"-ve X trainset: {Xn_.shape}, -ve y trainset: {yn_.shape}, -ve trainset: {len(train_dataset_n)}, total trainset: {len(train_dataset)}")
-        
+
         # end_train_time = time.time()-start_train_time
         # logger.info(f"Time spent in creating the training dataset: {end_train_time}")
 
@@ -101,7 +104,7 @@ def fit(model, pos_sample, neg_sample, loss_fn, opt, config, output_dir, writer,
         test_dataset_n = T2VDataset(Xn_, yn_, vocab, device, config)
         test_dataset = ConcatDataset([test_dataset_p, test_dataset_n])
         # logger.info(f"-ve X testset: {Xn_.shape}, -ve y testset: {yn_.shape}, -ve testset: {len(test_dataset_n)}, total testset: {len(test_dataset)}")
-        
+
         # end_test_time = time.time()-start_test_time
         # logger.info(f"Time spent in creating the testing dataset: {end_test_time}")
 
@@ -138,7 +141,7 @@ def fit(model, pos_sample, neg_sample, loss_fn, opt, config, output_dir, writer,
 
 
 def make_writer(output_dir, writer_type, config):
-    path = os.path.join(output_dir, 'viz')
+    path = os.path.join(output_dir, config['model_props']['viz_path'])
     utils.make_dirs(path)
     path = os.path.join(path, writer_type)
     utils.make_dirs(path)
@@ -149,6 +152,7 @@ if __name__ == "__main__":
     output_dir, config = utils.setup_simulation()
     model_params = config['model_params']
     input_files = config['input_files']
+    trec_config = config['trec']
 
     torch.manual_seed(model_params['seed'])
 
@@ -177,3 +181,21 @@ if __name__ == "__main__":
 
     train_writer.close()
     test_writer.close()
+
+    logger.info('TREC model building...')
+    model_load = torch.load(os.path.join(output_dir, 'model.pt'))
+    # model_load = torch.load('./output/11_25_15_56_30/model.pt')
+    baseline_f = pd.read_csv(input_files['baseline_f'])
+
+    trec = TREC_data_prep(model=model_load, vocab=vocab)
+    baseline_f = trec.mp(df=baseline_f, func=trec.pipeline, num_partitions=20)
+    baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)
+    # baseline_f.to_csv('./baseline_f_tq-emb_temp.csv', index=False)
+    # baseline_f = pd.read_csv('./baseline_f_tq-emb_temp.csv')
+
+    logger.info('TREC NDCG scoring....')
+    trec_path = os.path.join(output_dir, trec_config['folder_name'])
+    trec_model = TREC_model(data=baseline_f, output_dir=trec_path, config=config)
+    trec_model.train()
+
+    ndcg_pipeline(trec_model.file_path, trec_config['trec_path'], trec_config['query_file_path'])
