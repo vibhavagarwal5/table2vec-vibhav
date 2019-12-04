@@ -3,7 +3,7 @@
 output = "./output"
 
 # Misc
-CUDA_NO = 2
+CUDA_NO = 1
 
 [input_files]
 Xp_path = "./data/xp_2D_10-50.pkl"
@@ -22,8 +22,8 @@ LENGTH_PER_CELL = 20
 seed = 42
 batch_size = 64
 embedding_dim = 100
-epochs = 25
-otp_lr = 3e-6
+epochs = 15
+otp_lr = 3e-5
 
 [model_props]
 viz_path = 'viz'
