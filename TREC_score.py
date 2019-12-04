@@ -1,3 +1,4 @@
+import argparse
 import logging
 import pandas as pd
 import numpy as np
@@ -31,14 +32,23 @@ def ndcg_pipeline(path, trec_path, query_file_path):
 
     command = os.popen(
         f"{trec_path} -m ndcg_cut.5,10,15,20 {query_file_path} {path}all.txt")
-    logger.info('NDCG score: \n')
-    logger.info(command.read())
+    logger.info('NDCG score:')
+    result = command.read()
     command.close()
+    return result
+
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--path",
+                        help="path for the scores")
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
-    path = './output/11_30_20_20_58/TREC_results/LTR_k5_'
+    args = get_args()
+    path = f'./output/{args.path}/TREC_results/LTR_k5_'
     trec_path = '../trec_eval/trec_eval'
     query_file_path = '../global_data/qrels.txt'
 
-    ndcg_pipeline(path, trec_path, query_file_path)
+    print(ndcg_pipeline(path, trec_path, query_file_path))
