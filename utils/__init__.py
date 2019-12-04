@@ -36,26 +36,16 @@ def setup_loggers(output_dir):
     app_logger.propogate = False
 
 
-def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--config", help="path to configuration file (toml format)")
-    parser.add_argument(
-        "--comment", help="additional comments for simulation to be run."
-    )
-    args = parser.parse_args()
-    return args
-
-def load_config_args():
-    args = get_args()
+def load_config_args(args):
     config = Config()
     if args.config:
         config.load(args.config)
     config.add_to_config("comment", args.comment)
     return config
 
-def setup_simulation():
-    config = load_config_args()
+
+def setup_simulation(args):
+    config = load_config_args(args)
 
     # create output directory
     t = datetime.today()
