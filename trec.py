@@ -1,3 +1,4 @@
+import argparse
 from pandarallel import pandarallel
 import numpy as np
 import pandas as pd
@@ -7,11 +8,14 @@ from multiprocessing import Pool
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, KFold
+import logging
 
 from preprocess import loadpkl, tokenize_table, read_table, tokenize_cell
 import utils
+from utils import Config
 
 pandarallel.initialize(progress_bar=True, nb_workers=20, shm_size_mb=3000)
+logger = logging.getLogger("app")
 
 
 class TREC_data_prep():
@@ -61,19 +65,19 @@ class TREC_data_prep():
         return df
 
     def pipeline(self, baseline_f):
-        baseline_f['table_emb'] = baseline_f.table_id.apply(
+        baseline_f['table_emb'] = baseline_f.table_id.parallel_apply(
             lambda x: self.get_emb(tokenize_table(read_table(x)['data'])))
         # baseline_f['query_tkn'] = baseline_f['query'].apply(
         #     lambda x: tokenize_cell(x))
-        baseline_f['query_emb'] = baseline_f['query'].apply(
+        baseline_f['query_emb'] = baseline_f['query'].parallel_apply(
             lambda x: [self.embeddings[self.w2i[item]] for item in tokenize_cell(x)])
 
         baseline_f['early_fusion'] = baseline_f.apply(
             lambda x: self.early_fusion(x['table_emb'], x['query_emb']), axis=1)
-        baseline_f['late_fusion'] = baseline_f.apply(
+        baseline_f['late_fusion'] = baseline_f.parallel_apply(
             lambda x: self.late_fusion(x['table_emb'], x['query_emb']), axis=1)
 
-        baseline_f['late_fusion_max'] = baseline_f.late_fusion.apply(
+        baseline_f['late_fusion_max'] = baseline_f.late_fusion.parallel_apply(
             np.max)
         baseline_f['late_fusion_avg'] = baseline_f.late_fusion.apply(
             np.average)
@@ -150,17 +154,32 @@ class TREC_model():
         return df_temp
 
 
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--path",
+                        help="path for the scores")
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
+    args = get_args()
     vocab = loadpkl('./data/vocab_2D_10-50_complete.pkl')
-    model = torch.load('./output/11_25_15_56_30/model.pt')
+    output_dir = f'./output/{args.path}'
 
-    # trec = TREC_data_prep(model=model, vocab=vocab)
-    # baseline_f = pd.read_csv('../global_data/features.csv')
+    config = Config()
+    model_load = torch.load(os.path.join(output_dir, 'model.pt'))
+    # model_load = torch.load('./output/11_25_15_56_30/model.pt')
+    baseline_f = pd.read_csv(config['input_files']['baseline_f'])
 
-    # baseline_f = trec.mp(df=baseline_f, func=trec.pipeline, num_partitions=20)
-    # baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)
+    trec = TREC_data_prep(model=model_load, vocab=vocab)
+    baseline_f = trec.pipeline(baseline_f)
+    # baseline_f = trec.mp(
+    #     df=baseline_f, func=trec.pipeline, num_partitions=20)
+    baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)
     # baseline_f.to_csv('./baseline_f_tq-emb_temp.csv', index=False)
+    # baseline_f = pd.read_csv('./baseline_f_tq-emb_temp.csv')
 
-    df = pd.read_csv('./baseline_f_tq-emb_temp.csv')
-    trec_model = TREC_model(df, True)
+    trec_path = os.path.join(output_dir, config['trec']['folder_name'])
+    trec_model = TREC_model(
+        data=baseline_f, output_dir=trec_path, config=config)
     trec_model.train()

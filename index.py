@@ -24,9 +24,8 @@ def get_args():
     parser.add_argument(
         "--config", help="path to configuration file (toml format)")
     parser.add_argument(
-        "--comment", default="", help="additional comments for simulation to be run."
+        "--comment", help="additional comments for simulation to be run."
     )
-
     return parser.parse_args()
 
 
@@ -38,6 +37,8 @@ if __name__ == '__main__':
     trec_config = config['trec']
 
     torch.manual_seed(model_params['seed'])
+    if args.ndcg:
+        logger.info("NDCG pipeline to be run in this simulation\n")
 
     Xp = loadpkl(input_files['Xp_path'])
     Xn = loadpkl(input_files['Xn_path'])
@@ -48,17 +49,15 @@ if __name__ == '__main__':
     logger.info(f"Xn.shape: {Xn.shape}, yn.shape: {yn.shape}")
     logger.info(f"len(vocab): {len(vocab)}")
 
-    device = torch.device(
-        f"cuda:{config['CUDA_NO']}" if torch.cuda.is_available() else 'cpu')
-
     train_writer = make_writer(output_dir, 'train', config)
     test_writer = make_writer(output_dir, 'test', config)
 
-    print(test_writer, train_writer)
-    loss_function = nn.BCELoss()
+    device = torch.device(
+        f"cuda:{config['CUDA_NO']}" if torch.cuda.is_available() else 'cpu')
+
     model = Table2Vec(len(vocab), model_params['embedding_dim'], device)
     model = model.to(device)
-    model.init()
+    loss_function = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     fit(model=model, pos_sample=(Xp, yp), neg_sample=(Xn, yn), vocab=vocab, loss_fn=loss_function,
@@ -74,8 +73,9 @@ if __name__ == '__main__':
         baseline_f = pd.read_csv(input_files['baseline_f'])
 
         trec = TREC_data_prep(model=model_load, vocab=vocab)
-        baseline_f = trec.mp(
-            df=baseline_f, func=trec.pipeline, num_partitions=20)
+        baseline_f = trec.pipeline(baseline_f)
+        # baseline_f = trec.mp(
+        #     df=baseline_f, func=trec.pipeline, num_partitions=20)
         baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)
         # baseline_f.to_csv('./baseline_f_tq-emb_temp.csv', index=False)
         # baseline_f = pd.read_csv('./baseline_f_tq-emb_temp.csv')
@@ -86,5 +86,6 @@ if __name__ == '__main__':
             data=baseline_f, output_dir=trec_path, config=config)
         trec_model.train()
 
-        ndcg_pipeline(trec_model.file_path,
+        ndcg_score = ndcg_pipeline(trec_model.file_path,
                       trec_config['trec_path'], trec_config['query_file_path'])
+        logger.info(f"\n{ndcg_score}")
