@@ -1,4 +1,5 @@
-data*
+data/
+data_old/
 output/
 __pycache__/
 .ipynb_checkpoints/
