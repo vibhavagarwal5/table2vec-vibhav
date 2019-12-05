@@ -10,7 +10,7 @@ import utils
 from preprocess import loadpkl
 from dataset import T2VDataset
 from model import Table2Vec
-from trec import TREC_data_prep, TREC_model
+from trec import TREC_data_prep, TREC_model, mp
 from TREC_score import ndcg_pipeline
 from training import fit, make_writer
 
@@ -69,16 +69,12 @@ if __name__ == '__main__':
     if args.ndcg:
         logger.info('TREC model building...')
         model_load = torch.load(os.path.join(output_dir, 'model.pt'))
-        # model_load = torch.load('./output/11_25_15_56_30/model.pt')
         baseline_f = pd.read_csv(input_files['baseline_f'])
 
         trec = TREC_data_prep(model=model_load, vocab=vocab)
-        baseline_f = trec.pipeline(baseline_f)
-        # baseline_f = trec.mp(
-        #     df=baseline_f, func=trec.pipeline, num_partitions=20)
+        baseline_f = mp(
+            df=baseline_f, func=trec.pipeline, num_partitions=20)
         baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)
-        # baseline_f.to_csv('./baseline_f_tq-emb_temp.csv', index=False)
-        # baseline_f = pd.read_csv('./baseline_f_tq-emb_temp.csv')
 
         logger.info('TREC NDCG scoring....')
         trec_path = os.path.join(output_dir, trec_config['folder_name'])
@@ -87,5 +83,5 @@ if __name__ == '__main__':
         trec_model.train()
 
         ndcg_score = ndcg_pipeline(trec_model.file_path,
-                      trec_config['trec_path'], trec_config['query_file_path'])
+                                   trec_config['trec_path'], trec_config['query_file_path'])
         logger.info(f"\n{ndcg_score}")
