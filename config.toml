@@ -12,6 +12,7 @@ yp_path = "./data/yp_2D_10-50.pkl"
 yn_path = "./data/yn_2D_10-50.pkl"
 vocab_path = "./data/vocab_2D_10-50_complete.pkl"
 baseline_f = '../global_data/features.csv'
+baseline_f_tkn = './baseline_f_tq-tkn.csv'
 
 [table_prep_params]
 MAX_COL_LEN = 10

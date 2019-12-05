@@ -55,6 +55,5 @@ class Table2Vec(nn.Module):
         x = self.drop2(x)
         x = F.relu(x)
         x = self.fc2(x)
-        x = F.relu(x)
         pred = torch.sigmoid(x)
         return pred
