@@ -19,8 +19,6 @@ logger = logging.getLogger("app")
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ndcg",
-                        help="Evaluate NDCG score pipeline or not", action="store_true")
     parser.add_argument(
         "--config", help="path to configuration file (toml format)")
     parser.add_argument(
@@ -65,23 +63,3 @@ if __name__ == '__main__':
 
     train_writer.close()
     test_writer.close()
-
-    if args.ndcg:
-        logger.info('TREC model building...')
-        model_load = torch.load(os.path.join(output_dir, 'model.pt'))
-        baseline_f = pd.read_csv(input_files['baseline_f'])
-
-        trec = TREC_data_prep(model=model_load, vocab=vocab)
-        baseline_f = mp(
-            df=baseline_f, func=trec.pipeline, num_partitions=20)
-        baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)
-
-        logger.info('TREC NDCG scoring....')
-        trec_path = os.path.join(output_dir, trec_config['folder_name'])
-        trec_model = TREC_model(
-            data=baseline_f, output_dir=trec_path, config=config)
-        trec_model.train()
-
-        ndcg_score = ndcg_pipeline(trec_model.file_path,
-                                   trec_config['trec_path'], trec_config['query_file_path'])
-        logger.info(f"\n{ndcg_score}")
