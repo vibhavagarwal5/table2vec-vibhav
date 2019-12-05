@@ -17,13 +17,33 @@ import utils
 from preprocess import loadpkl
 from dataset import T2VDataset
 from model import Table2Vec
-from trec import TREC_data_prep, TREC_model
+from trec import TREC_data_prep, TREC_model, mp
 from TREC_score import ndcg_pipeline
 
 logger = logging.getLogger("app")
 
 
 def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, writer, device):
+    def trec_eval(model):
+        logger.info('TREC model building...')
+        # model_load = torch.load(os.path.join(output_dir, 'model.pt'))
+        baseline_f = pd.read_csv(config['input_files']['baseline_f_tkn'])
+
+        trec = TREC_data_prep(model=model, vocab=vocab)
+        baseline_f = mp(
+            df=baseline_f, func=trec.pipeline, num_partitions=20)
+        baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)
+
+        logger.info('TREC NDCG scoring....')
+        trec_path = os.path.join(output_dir, config['trec']['folder_name'])
+        trec_model = TREC_model(
+            data=baseline_f, output_dir=trec_path, config=config)
+        trec_model.train()
+
+        ndcg_score = ndcg_pipeline(trec_model.file_path,
+                                   config['trec']['trec_path'], config['trec']['query_file_path'])
+        logger.info(f"\n{ndcg_score}")
+
     Xp, yp = pos_sample
     Xn, yn = neg_sample
     train_writer, test_writer = writer
@@ -131,6 +151,7 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
         test_writer.add_scalar('Recall', recall, epoch)
         logger.info(
             f"Testing - Loss : {loss_per_epoch}, Accuracy : {accuracy}, Precision : {precision}, Recall : {recall}, F1-score : {f1}")
+        trec_eval(model)
 
         end_time = time.time()-start_time
         logger.info(f"TIme spent in this epoch : {end_time}\n")

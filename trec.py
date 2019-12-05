@@ -23,7 +23,7 @@ class TREC_data_prep():
 
     def __init__(self, model, vocab):
         self.w2i = {w: i for i, w in enumerate(vocab)}
-        self.embeddings = model['embeddings.weight'].cpu().data.numpy()
+        self.embeddings = model.embeddings.weight.cpu().data.numpy()
 
     def get_emb(self, table):
         if len(table) == 0:
