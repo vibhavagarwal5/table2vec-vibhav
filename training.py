@@ -16,7 +16,6 @@ from sklearn.model_selection import train_test_split
 import utils
 from preprocess import loadpkl, savepkl
 from dataset import T2VDataset
-from model import Table2Vec
 from trec import TREC_data_prep, TREC_model, mp
 from TREC_score import ndcg_pipeline
 
@@ -140,11 +139,12 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
         logger.info(
             f"Testing - Loss : {loss_per_epoch}, Accuracy : {accuracy}, Precision : {precision}, Recall : {recall}, F1-score : {f1}")
 
-        ndcg_score, ndcg_score_dict = trec_eval(model)
-        logger.info(f"\n{ndcg_score}")
-        for ndcg_type in ndcg_score_dict.keys():
-            train_writer.add_scalar(f'NDCG scores/{ndcg_type}', ndcg_score_dict[ndcg_type], epoch)
-        # train_writer.add_scalars(f'NDCG scores', ndcg_score_dict, epoch)
+        if config['trec']['compute']:
+            ndcg_score, ndcg_score_dict = trec_eval(model)
+            logger.info(f"\n{ndcg_score}")
+            for ndcg_type in ndcg_score_dict.keys():
+                train_writer.add_scalar(f'NDCG scores/{ndcg_type}', ndcg_score_dict[ndcg_type], epoch)
+            # train_writer.add_scalars(f'NDCG scores', ndcg_score_dict, epoch)
 
         end_time_epoch = time.time()-start_time_epoch
         logger.info(f"Time spent in this epoch : {end_time_epoch}\n")

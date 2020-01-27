@@ -32,7 +32,6 @@ def setup_loggers(output_dir):
 
     # set log levels
     app_logger.setLevel('INFO')
-
     app_logger.propogate = False
 
 
@@ -40,7 +39,10 @@ def load_config_args(args):
     config = Config()
     if args.config:
         config.load(args.config)
+        
     config.add_to_config("comment", args.comment)
+    config['model_props']['type'] = args.model_type
+    config.add_to_config("model_props", config['model_props'])
     return config
 
 

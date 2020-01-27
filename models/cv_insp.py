@@ -1,4 +1,3 @@
-import logging
 import numpy as np
 from multiprocessing import Pool
 import torch
@@ -7,17 +6,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torchsummary import summary
 from preprocess import loadpkl, savepkl, print_table
-
-logger = logging.getLogger("app")
-
-class PrintLayer(nn.Module):
-    def __init__(self):
-        super(PrintLayer, self).__init__()
-
-    def forward(self, x):
-        # Do your print / debug stuff here
-        logger.info(x.shape)
-        return x
 
 
 class Table2Vec(nn.Module):

@@ -2,9 +2,6 @@
 # Output directory name
 output = "./output"
 
-# Misc
-CUDA_NO = 1
-
 [input_files]
 Xp_path = "./data/xp_2D_10-50.pkl"
 Xn_path = "./data/xn_2D_10-50.pkl"
@@ -35,3 +32,4 @@ query_file_path = '../global_data/qrels.txt'
 folder_name = "TREC_results"
 file_name = 'LTR_k5_'
 semantic_f = true
+compute = true

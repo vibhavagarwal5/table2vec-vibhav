@@ -9,7 +9,7 @@ import torch.nn as nn
 import utils
 from preprocess import loadpkl
 from dataset import T2VDataset
-from model import Table2Vec
+import models
 from trec import TREC_data_prep, TREC_model, mp
 from TREC_score import ndcg_pipeline
 from training import fit, make_writer
@@ -21,6 +21,10 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config", help="path to configuration file (toml format)")
+    parser.add_argument(
+        "--cuda_no", help="gpu number to run with")
+    parser.add_argument(
+        "--model_type", help="model type to be trained")
     parser.add_argument(
         "--comment", help="additional comments for simulation to be run."
     )
@@ -49,9 +53,10 @@ if __name__ == '__main__':
     test_writer = make_writer(output_dir, 'test', config)
 
     device = torch.device(
-        f"cuda:{config['CUDA_NO']}" if torch.cuda.is_available() else 'cpu')
+        f"cuda:{args.cuda_no}" if torch.cuda.is_available() else 'cpu')
 
-    model = Table2Vec(len(vocab), model_params['embedding_dim'], device)
+    model = models.create_model(config['model_props']['type'], params=(len(vocab), model_params['embedding_dim'], device))
+    # model = Table2Vec(len(vocab), model_params['embedding_dim'], device)
     model = model.to(device)
     loss_function = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
