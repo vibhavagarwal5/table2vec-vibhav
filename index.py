@@ -35,8 +35,6 @@ if __name__ == '__main__':
     trec_config = config['trec']
 
     torch.manual_seed(model_params['seed'])
-    if args.ndcg:
-        logger.info("NDCG pipeline to be run in this simulation\n")
 
     Xp = loadpkl(input_files['Xp_path'])
     Xn = loadpkl(input_files['Xn_path'])
@@ -59,7 +57,7 @@ if __name__ == '__main__':
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     fit(model=model, pos_sample=(Xp, yp), neg_sample=(Xn, yn), vocab=vocab, loss_fn=loss_function,
-        opt=optimizer, config=config, output_dir=output_dir, writer=(train_writer, test_writer), device=device)
+        opt=optimizer, config=config, output_dir=output_dir, writers=(train_writer, test_writer), device=device)
 
     train_writer.close()
     test_writer.close()

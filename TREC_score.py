@@ -32,10 +32,17 @@ def ndcg_pipeline(path, trec_path, query_file_path):
 
     command = os.popen(
         f"{trec_path} -m ndcg_cut.5,10,15,20 {query_file_path} {path}all.txt")
-    logger.info('NDCG score:')
     result = command.read()
     command.close()
-    return result
+    return result, get_ndcg_dict(result)
+
+
+def get_ndcg_dict(ndcg_str):
+    d = {}
+    for i in ndcg_str.strip().split('\n'):
+        l = i.split('\tall\t')
+        d[l[0].strip()] = float(l[1])
+    return d
 
 
 def get_args():
@@ -51,4 +58,5 @@ if __name__ == '__main__':
     trec_path = '../trec_eval/trec_eval'
     query_file_path = '../global_data/qrels.txt'
 
-    print(ndcg_pipeline(path, trec_path, query_file_path))
+    res, res_d = ndcg_pipeline(path, trec_path, query_file_path)
+    print(res, res_d)
