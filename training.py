@@ -59,6 +59,7 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
 
     # logger.info(f"+ve trainset: {len(train_dataset_p)}, +ve testset: {len(test_dataset_p)}")
     start_time_total = time.time()
+    ndcg_scores_total = {}
 
     for epoch in range(epochs):
         start_time_epoch = time.time()
@@ -143,7 +144,13 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
             ndcg_score, ndcg_score_dict = trec_eval(model)
             logger.info(f"\n{ndcg_score}")
             for ndcg_type in ndcg_score_dict.keys():
-                train_writer.add_scalar(f'NDCG scores/{ndcg_type}', ndcg_score_dict[ndcg_type], epoch)
+                train_writer.add_scalar(
+                    f'NDCG scores/{ndcg_type}', ndcg_score_dict[ndcg_type], epoch)
+                if ndcg_type not in ndcg_scores_total.keys():
+                    ndcg_scores_total[ndcg_type] = []
+                else:
+                    ndcg_scores_total[ndcg_type].append(
+                        ndcg_score_dict[ndcg_type])
             # train_writer.add_scalars(f'NDCG scores', ndcg_score_dict, epoch)
 
         end_time_epoch = time.time()-start_time_epoch
@@ -155,6 +162,7 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
     end_time_total = time.time()-start_time_total
     logger.info(f"Time spent total : {end_time_total}\n")
     torch.save(model.state_dict(), model_name)
+    # plot_ndcg_epochs(ndcg_scores_total, output_dir, config)
 
 
 def make_writer(output_dir, writer_type, config):
@@ -163,3 +171,15 @@ def make_writer(output_dir, writer_type, config):
     path = os.path.join(path, writer_type)
     utils.make_dirs(path)
     return SummaryWriter(log_dir=path, comment=config['comment'])
+
+
+def plot_ndcg_epochs(ndcg_scores_total, output_dir, config):
+    f, axes = plt.subplots(4, 1, figsize=(10, 20))
+    baselines = [0.5951, 0.6293, 0.6590, 0.6825]
+    path = os.path.join(output_dir, config['model_props']['viz_path'])
+    for a, n, b in zip(axes, list(ndcg_scores_total.keys()), baselines):
+        a.plot(ndcg_scores_total[n], label=n, color='red')
+        a.axhline(y=b, label='baseline')
+        a.set_title(n)
+        a.legend(loc='center')
+    plt.savefig(os.path.join(path, 'ndcg_compare.png'))
