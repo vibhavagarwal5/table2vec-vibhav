@@ -1,23 +1,26 @@
-import time
 import logging
+import os
+import random
+import time
+
 import numpy as np
 import pandas as pd
-import random
-import os
 import torch
-from torch.utils.data import DataLoader, Dataset, ConcatDataset, random_split
-import torch.optim as optim
 import torch.nn as nn
-from tqdm import tqdm
-from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_auc_score, average_precision_score, f1_score, precision_recall_curve
-from torch.utils.tensorboard import SummaryWriter
+import torch.optim as optim
+from sklearn.metrics import (accuracy_score, average_precision_score, f1_score,
+                             precision_recall_curve, precision_score,
+                             recall_score, roc_auc_score)
 from sklearn.model_selection import train_test_split
+from torch.utils.data import ConcatDataset, DataLoader, Dataset, random_split
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
 import utils
-from preprocess import loadpkl, savepkl
 from dataset import T2VDataset
 from trec import TREC_data_prep, TREC_model, mp
 from TREC_score import ndcg_pipeline
+from utils import loadpkl, savepkl
 
 logger = logging.getLogger("app")
 
@@ -51,7 +54,15 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
     train_writer.add_graph(model, torch.ones(
         [1, 50, 10, 20], dtype=torch.long, device=device))
 
+    '''
+    Creating + and - dataset
+    '''
     dataset_p = T2VDataset(Xp, yp, vocab, device, config)
+    dataset_n = T2VDataset(Xn, yn, vocab, device, config)
+
+    '''
+    Splitting the +ve dataset into train and test sets
+    '''
     train_size = int(0.7 * len(dataset_p))
     test_size = len(dataset_p) - train_size
     train_dataset_p, test_dataset_p = random_split(
@@ -64,22 +75,34 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
     for epoch in range(epochs):
         start_time_epoch = time.time()
         logger.info(f"Epoch: {epoch+1}/{epochs}")
-        train_Xn, test_Xn = train_test_split(Xn, train_size=0.7)
-        train_yn, test_yn = train_test_split(yn, train_size=0.7)
 
-        '''Training'''
+        '''
+        Splitting the -ve dataset into train and test sets every epoch
+        '''
+        # train_Xn, test_Xn = train_test_split(Xn, train_size=0.7)
+        # train_yn, test_yn = train_test_split(yn, train_size=0.7)
+        train_size = int(0.7 * len(dataset_n))
+        test_size = len(dataset_n) - train_size
+        train_dataset_n, test_dataset_n = random_split(
+            dataset_n, [train_size, test_size])
+
+        '''
+        Training
+        '''
         loss_per_epoch = 0
         y_actual_train = list()
         y_pred_train = list()
 
-        Xn_ = np.array(random.sample(train_Xn.tolist(), len(train_dataset_p)))
-        yn_ = np.array(random.sample(train_yn.tolist(), len(train_dataset_p)))
-        train_dataset_n = T2VDataset(Xn_, yn_, vocab, device, config)
+        '''
+        Creating training dataset
+        '''
+        # Xn_ = np.array(random.sample(train_Xn.tolist(), len(train_dataset_p)))
+        # yn_ = np.array(random.sample(train_yn.tolist(), len(train_dataset_p)))
+        # train_dataset_n = T2VDataset(Xn_, yn_, vocab, device, config)
         train_dataset = ConcatDataset([train_dataset_p, train_dataset_n])
-        # logger.info(f"-ve X trainset: {Xn_.shape}, -ve y trainset: {yn_.shape}, -ve trainset: {len(train_dataset_n)}, total trainset: {len(train_dataset)}")
-
         dataloader = DataLoader(
             train_dataset, batch_size=config['model_params']['batch_size'], shuffle=True)
+        # logger.info(f"-ve X trainset: {Xn_.shape}, -ve y trainset: {yn_.shape}, -ve trainset: {len(train_dataset_n)}, total trainset: {len(train_dataset)}")
 
         for X_batch, y_batch in tqdm(dataloader):
             y_pred = model(X_batch)
@@ -105,19 +128,25 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
         logger.info(
             f"Training - Loss : {loss_per_epoch}, Accuracy : {accuracy}, Precision : {precision}, Recall : {recall}, F1-score : {f1}")
 
-        '''Testing'''
+        '''--------------------------------------------------------------------------------------'''
+
+        '''
+        Testing
+        '''
         loss_per_epoch = 0
         y_actual_test = list()
         y_pred_test = list()
 
-        Xn_ = np.array(random.sample(test_Xn.tolist(), len(test_dataset_p)))
-        yn_ = np.array(random.sample(test_yn.tolist(), len(test_dataset_p)))
-        test_dataset_n = T2VDataset(Xn_, yn_, vocab, device, config)
+        '''
+        Creating testing dataset
+        '''
+        # Xn_ = np.array(random.sample(test_Xn.tolist(), len(test_dataset_p)))
+        # yn_ = np.array(random.sample(test_yn.tolist(), len(test_dataset_p)))
+        # test_dataset_n = T2VDataset(Xn_, yn_, vocab, device, config)
         test_dataset = ConcatDataset([test_dataset_p, test_dataset_n])
-        # logger.info(f"-ve X testset: {Xn_.shape}, -ve y testset: {yn_.shape}, -ve testset: {len(test_dataset_n)}, total testset: {len(test_dataset)}")
-
         dataloader = DataLoader(
             test_dataset, batch_size=config['model_params']['batch_size'], shuffle=True)
+        # logger.info(f"-ve X testset: {Xn_.shape}, -ve y testset: {yn_.shape}, -ve testset: {len(test_dataset_n)}, total testset: {len(test_dataset)}")
 
         for X_batch, y_batch in tqdm(dataloader):
             y_pred = model(X_batch)
@@ -155,14 +184,14 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
 
         end_time_epoch = time.time()-start_time_epoch
         logger.info(f"Time spent in this epoch : {end_time_epoch}\n")
-        
+
         train_writer.flush()
         test_writer.flush()
 
     end_time_total = time.time()-start_time_total
     logger.info(f"Time spent total : {end_time_total}\n")
     torch.save(model.state_dict(), model_name)
-    # plot_ndcg_epochs(ndcg_scores_total, output_dir, config)
+    plot_ndcg_epochs(ndcg_scores_total, output_dir, config)
 
 
 def make_writer(output_dir, writer_type, config):

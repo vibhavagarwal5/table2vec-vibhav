@@ -4,9 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torchsummary import summary
-from preprocess import loadpkl, savepkl, print_table
 
+from preprocess import loadpkl, savepkl, print_table
 
 class Table2Vec(nn.Module):
 

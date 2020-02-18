@@ -1,3 +1,4 @@
+import pickle
 import argparse
 import sys
 import os
@@ -39,8 +40,9 @@ def load_config_args(args):
     config = Config()
     if args.config:
         config.load(args.config)
-        
+
     config.add_to_config("comment", args.comment)
+    config.add_to_config("cuda_no", args.cuda_no)
     config['model_props']['type'] = args.model_type
     config.add_to_config("model_props", config['model_props'])
     return config
@@ -65,3 +67,13 @@ def setup_simulation(args):
     logger.info(f"Saved configuration options at {config_path}")
 
     return output_dir, config
+
+
+def loadpkl(fname):
+    with open(fname, 'rb') as f:
+        return pickle.load(f)
+
+
+def savepkl(fname, obj):
+    with open(fname, 'wb') as f:
+        pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)

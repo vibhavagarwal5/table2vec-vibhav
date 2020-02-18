@@ -1,9 +1,10 @@
+
 # Output directory name
 output = "./output"
 
 [input_files]
-Xp_path = "./data/xp_2D_10-50_pad.pkl"
-Xn_path = "./data/xn_2D_10-50_pad.pkl"
+Xp_path = "./data/xp_2D_10-50.pkl"
+Xn_path = "./data/xn_2D_10-50.pkl"
 yp_path = "./data/yp_2D_10-50.pkl"
 yn_path = "./data/yn_2D_10-50.pkl"
 vocab_path = "./data/vocab_2D_10-50_complete.pkl"
@@ -19,7 +20,7 @@ seed = 42
 batch_size = 64
 embedding_dim = 100
 epochs = 50
-otp_lr = 3e-5
+otp_lr = 1e-5
 
 [model_props]
 viz_path = 'viz'

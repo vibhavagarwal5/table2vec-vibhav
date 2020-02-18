@@ -1,26 +1,26 @@
 import argparse
-from pandarallel import pandarallel
+import logging
+import os
+import time
+from multiprocessing import Pool
+
 import numpy as np
 import pandas as pd
-import os
 import torch
-from multiprocessing import Pool
+from sklearn.ensemble import AdaBoostClassifier, RandomForestClassifier
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split, KFold
-import logging
-import time
+from sklearn.model_selection import KFold, train_test_split
+from tqdm import tqdm
+from xgboost import XGBClassifier
 
-from preprocess import loadpkl, tokenize_table, read_table, tokenize_cell
 import utils
-from utils import Config
+from preprocess import read_table, tokenize_str, tokenize_table
+from utils import Config, loadpkl
 
-# pandarallel.initialize(progress_bar=True, nb_workers=20, shm_size_mb=3000)
 logger = logging.getLogger("app")
 
 
 class TREC_data_prep():
-
     def __init__(self, model, vocab):
         self.w2i = {w: i for i, w in enumerate(vocab)}
         self.embeddings = model.embeddings.weight.cpu().data.numpy()
@@ -44,9 +44,9 @@ class TREC_data_prep():
         s = []
         for i in query:
             for j in table:
-                i = np.array(i)
-                j = np.array(j)
-                sim = cosine_similarity(i.reshape(1, -1), j.reshape(1, -1))
+                sim = cosine_similarity(
+                    np.array(i).reshape(1, -1),
+                    np.array(j).reshape(1, -1))
                 s.append(sim)
         s = np.array(s).reshape(-1)
         return s
@@ -100,7 +100,6 @@ class TREC_model():
 
     def train(self):
         kfold = KFold(5, True, 42)
-
         for i, indices in enumerate(kfold.split(self.X)):
             train_idx, test_idx = indices
             X_train, X_test, y_train, y_test = self.X.iloc[train_idx], self.X.iloc[
@@ -110,9 +109,21 @@ class TREC_model():
                       sep=' ', index=False, header=False)
 
     def makeModel_getdf(self, X_train, X_test, y_train, y_test):
+        # self.clf = XGBClassifier(
+            # tree_method='gpu_hist',
+            # gpu_id=self.config['cuda_no']
+            # )
+        # self.clf = AdaBoostClassifier(
+        #     n_estimators=1000,
+        #     learning_rate=1,
+        #     random_state=42)
         self.clf = RandomForestClassifier(
-            n_estimators=1000, max_features=3, random_state=42)
+            n_estimators=1000,
+            max_features=3,
+            random_state=42)
         self.clf.fit(X_train, y_train.values.ravel())
+        # self.clf.fit(X_train.values, y_train.values)
+        # X_test = self.score_mp(X_test)
         X_test = mp(X_test, self.score_mp, 20)
         df = self.generate_trec_df(self.generate_filtered_df(X_test, y_test))
         return df
@@ -151,10 +162,12 @@ class TREC_model():
 
 def mp(df, func, num_partitions):
     df_split = np.array_split(df, num_partitions)
-    pool = Pool(num_partitions)
-    df = pd.concat(pool.map(func, df_split))
-    pool.close()
-    pool.join()
+    # p = Pool(num_partitions)
+    # df = pd.concat(p.map(func, df_split))
+    with Pool(num_partitions) as p:
+        df = pd.concat(tqdm(p.imap(func, df_split), total=len(df_split)))
+    p.close()
+    p.join()
     return df
 
 
@@ -179,28 +192,28 @@ if __name__ == '__main__':
             baseline_f['table_tkn'] = baseline_f.table_id.apply(
                 lambda x: tokenize_table(read_table(x)['data']))
             baseline_f['query_tkn'] = baseline_f['query'].apply(
-                lambda x: tokenize_cell(x))
+                lambda x: tokenize_str(x))
             return baseline_f
+
         baseline_f = mp(baseline_f, t, 20)
-        baseline_f.to_csv('./baseline_f_tq-tkn.csv', index=False)
+        baseline_f.to_csv('./data/baseline_f_tq-tkn.csv', index=False)
 
-    vocab = loadpkl('./data/vocab_2D_10-50_complete.pkl')
-    output_dir = f'./output/{args.path}'
+    if args.path:
+        config = Config()
+        vocab = loadpkl(config['input_files']['vocab_path'])
+        output_dir = f'./output/{args.path}'
+        model_load = torch.load(os.path.join(output_dir, 'model.pt'))
+        baseline_f = pd.read_csv(config['input_files']['baseline_f'])
 
-    config = Config()
-    model_load = torch.load(os.path.join(output_dir, 'model.pt'))
-    # model_load = torch.load('./output/11_25_15_56_30/model.pt')
-    baseline_f = pd.read_csv('./baseline_f_tq-tkn.csv')
+        trec = TREC_data_prep(model=model_load, vocab=vocab)
+        baseline_f = mp(
+            df=baseline_f, func=trec.pipeline, num_partitions=20)
+        baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)
+        # baseline_f.to_csv('./baseline_f_tq-emb_temp.csv', index=False)
+        # baseline_f = pd.read_csv('./baseline_f_tq-emb_temp.csv')
 
-    trec = TREC_data_prep(model=model_load, vocab=vocab)
-    baseline_f = mp(
-        df=baseline_f, func=trec.pipeline, num_partitions=20)
-    baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)
-    # baseline_f.to_csv('./baseline_f_tq-emb_temp.csv', index=False)
-    # baseline_f = pd.read_csv('./baseline_f_tq-emb_temp.csv')
-
-    trec_path = os.path.join(output_dir, config['trec']['folder_name'])
-    trec_model = TREC_model(
-        data=baseline_f, output_dir=trec_path, config=config)
-    trec_model.train()
+        trec_path = os.path.join(output_dir, config['trec']['folder_name'])
+        trec_model = TREC_model(
+            data=baseline_f, output_dir=trec_path, config=config)
+        trec_model.train()
     print(time.time() - start_time)

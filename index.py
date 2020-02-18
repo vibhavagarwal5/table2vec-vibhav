@@ -1,18 +1,19 @@
-import logging
-import pandas as pd
 import argparse
+import logging
 import os
-import torch
-import torch.optim as optim
-import torch.nn as nn
 
-import utils
-from preprocess import loadpkl
-from dataset import T2VDataset
+import pandas as pd
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
 import models
-from trec import TREC_data_prep, TREC_model, mp
-from TREC_score import ndcg_pipeline
+import utils
+from dataset import T2VDataset
 from training import fit, make_writer
+from trec import TREC_data_prep, TREC_model
+from TREC_score import ndcg_pipeline
+from utils import loadpkl
 
 logger = logging.getLogger("app")
 
@@ -55,7 +56,8 @@ if __name__ == '__main__':
     device = torch.device(
         f"cuda:{args.cuda_no}" if torch.cuda.is_available() else 'cpu')
 
-    model = models.create_model(config['model_props']['type'], params=(len(vocab), model_params['embedding_dim'], device))
+    model = models.create_model(config['model_props']['type'], params=(
+        len(vocab), model_params['embedding_dim'], device))
     # model = Table2Vec(len(vocab), model_params['embedding_dim'], device)
     model = model.to(device)
     loss_function = nn.BCELoss()
