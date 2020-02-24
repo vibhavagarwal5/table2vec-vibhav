@@ -4,6 +4,7 @@ import sys
 import os
 import logging
 from datetime import datetime
+from itertools import chain, zip_longest
 
 from .config import Config
 
@@ -77,3 +78,7 @@ def loadpkl(fname):
 def savepkl(fname, obj):
     with open(fname, 'wb') as f:
         pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def flatten_1_deg(arr):
+    return list(chain(*arr))

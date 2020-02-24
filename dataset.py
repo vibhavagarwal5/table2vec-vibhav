@@ -9,7 +9,6 @@ from tqdm import tqdm
 
 import utils
 from utils import Config, loadpkl, savepkl
-from preprocess import cell_overflow_cap, print_table
 
 
 class T2VDataset(Dataset):
@@ -18,7 +17,6 @@ class T2VDataset(Dataset):
         self.table_prep_params = config['table_prep_params']
         self.vocab = vocab
 
-        # X = cell_overflow_cap(X)
         # p = Pool(processes=20)
         # X = p.map(self.pad_table, X)
         # p.close()
@@ -61,18 +59,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-p", "--pad_data_prep", help="path for the scores", action='store_true')
-    parser.add_argument(
-        "--data_type", help="+ve/-ve data type to prepare")
     args = parser.parse_args()
 
     config = Config()
 
-    if args.data_type == '+':
-        X = loadpkl(config['input_files']['Xp_path'])
-        y = loadpkl(config['input_files']['yp_path'])
-    elif args.data_type == '-':
-        X = loadpkl(config['input_files']['Xn_path'])
-        y = loadpkl(config['input_files']['yn_path'])
+    X = loadpkl("./data/xp_2D_10-50.pkl")
+    y = loadpkl("./data/yp_2D_10-50.pkl")
     vocab = loadpkl(config['input_files']['vocab_path'])
     table_prep_params = config['table_prep_params']
     print(X.shape, y.shape, len(vocab))
@@ -98,7 +90,6 @@ if __name__ == '__main__':
                     lambda y: w2i[y])(np.array(t)).tolist()
             return tables
 
-        X = cell_overflow_cap(X)
         p = Pool(processes=40)
         X = p.map(pad_table, X)
         p.close()
@@ -106,10 +97,7 @@ if __name__ == '__main__':
         X = table_words2index(X)
         X = np.array(X)
         print(X.shape)
-        if args.data_type == '+':
-            savepkl('./data/xp_2D_10-50_pad.pkl', X)
-        elif args.data_type == '-':
-            savepkl('./data/xn_2D_10-50_pad.pkl', X)
+        savepkl('./data/xp_2D_10-50_pad.pkl', X)
     else:
         device = torch.device(
             f"cuda:{1}" if torch.cuda.is_available() else 'cpu')

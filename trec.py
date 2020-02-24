@@ -175,7 +175,7 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--path",
                         help="path for the scores")
-    parser.add_argument("--data_prep",
+    parser.add_argument("-d", "--data_prep",
                         help="path for the scores", action='store_true')
     return parser.parse_args()
 

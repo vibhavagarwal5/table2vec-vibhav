@@ -15,7 +15,7 @@ from spacy.util import (compile_infix_regex, compile_prefix_regex,
                         compile_suffix_regex)
 from tqdm import tqdm
 
-from utils import loadpkl, savepkl
+from utils import loadpkl, savepkl, flatten_1_deg
 
 # file paths
 ALL_TABLES_PATH_ORG = '../global_data/tables_redi2_1/'
@@ -310,10 +310,6 @@ def print_table(table):
         for col in row:
             print(col)
         print()
-
-
-def flatten_1_deg(arr):
-    return list(chain(*arr))
 
 
 #  Main data clean and preparation pipeline
