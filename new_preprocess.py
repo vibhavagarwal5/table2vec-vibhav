@@ -27,7 +27,7 @@ SAMPLE_PERC = 0.5
 LENGTH_PER_CELL = 20
 
 nlp = spacy.load("en_core_web_md")
-
+nlp.add_pipe(nlp.create_pipe("merge_entities"))
 
 def read_table(table):
     if table.split('.')[-1] == 'json':
@@ -87,28 +87,37 @@ def tokenize_table(table):
     for i, row in enumerate(table):
         for j, cell in enumerate(row):
             table[i][j] = tokenize_str(clean_entities(cell))
-    table = filter_empty_cols(table)
+    # table = filter_empty_cols(table)
     return table
 
 
 def tokenize_str(cell):
     t = [token.orth_ for token in nlp(cell) if not (
         token.is_punct
+        or len(token.orth_) < 4
         or token.is_space
         or token.is_stop
-        or token.like_num
-        or contains_num(token.orth_)
         or token.is_currency
+        or token.like_url
+        or token.like_email
         or token.orth_ == '>'
         or token.orth_ == '<'
-        or len(token.orth_) < 4
+        or token.like_num
+        or small_alphanum(token.orth_)
+        or token.ent_type_ in ['DATE','TIME','MONEY','PERCENT']
     )]
+    t = [i.replace(" ","_") for i in t]
     return t
 
 
 def contains_num(s):
     return any(c.isdigit() for c in s)
 
+def small_alphanum(s):
+    if len([i for i in s if i.isalpha()])<3:
+        return True
+    else:
+        return False
 
 def cell_overflow_cap(X):
     def clip(cell):
@@ -178,11 +187,14 @@ def print_table(table):
         print()
 
 
-def remove_empty_tables(all_tables):
-    for i, t in enumerate(all_tables):
-        if np.array(t).size == 0:
-            del all_tables[i]
-    return all_tables
+def remove_empty_tables(tables):
+    tables = np.array(tables)
+    e_t = []
+    for i in range(len(tables)):
+        if np.array(tables[i]).size==0:
+            e_t.append(i)
+    tables =  np.delete(tables,e_t)  
+    return tables.tolist()
 
 
 def generate_vocab(X):
@@ -208,17 +220,17 @@ def generate_vocab(X):
     vocab.insert(0, '<UNK>')
     print(f'vocab: {len(vocab)}\n')
     savepkl(
-        f'./data/vocab_2D_{MAX_COL_LEN}-{MAX_ROW_LEN}_complete.pkl', vocab)
+        f'./data/vocab_{MAX_COL_LEN}-{MAX_ROW_LEN}.pkl', vocab)
 
 
 def data_prep_pipeline(X):
     '''
     Breaking tables into chunks over max col and row length
     '''
-    X = [split_overflow_table(read_table(table)) for table in X]
-    print(f"Intial # of tables before splitting::: {len(X)}")
-    X = flatten_1_deg(X)
-    print(f"Final # of tables::: {len(X)}")
+    # X = [split_overflow_table(read_table(table)) for table in X]
+    # print(f"Intial # of tables before splitting::: {len(X)}")
+    # X = flatten_1_deg(X)
+    # print(f"Final # of tables::: {len(X)}")
 
     '''
     Tokenizing and filtering out empty columns from X
@@ -231,20 +243,18 @@ def data_prep_pipeline(X):
     p.join()
     # print_table(X[0])
 
-    '''
-    Remove totally empty tables, generating vocab and cliiping cells to max_cell_len
-    '''
-    generate_vocab(X)
+    # '''
+    # Remove totally empty tables, generating vocab and cliiping cells to max_cell_len
+    # '''
+    # generate_vocab(X)
     X = remove_empty_tables(X)
-    X = cell_overflow_cap(X)
+    # X = cell_overflow_cap(X)
 
-    y = [1]*len(X)
-    y = np.array(y).reshape(-1, 1)
     X = np.array(X)
-    print(X.shape, y.shape)
-    print_table(X[0])
+    print(X.shape)
+    # print_table(X[0])
 
-    return X, y
+    return X
 
 
 if __name__ == "__main__":
@@ -253,15 +263,8 @@ if __name__ == "__main__":
     tables_subset = list(
         set(tables_subset_3k+random.sample(all_tables, 20000)))
 
-    # column_filter(read_table(tables_subset[0])['data'])
-
-    savepkl('./data/postive_tables_set.pkl', tables_subset)
+    savepkl(f'./data/wo_strnum3.0/postive_tables_set.pkl', tables_subset)
     read_all_tables = [read_table(js)['data'] for js in tables_subset]
-    dataset_stats(read_all_tables)
-
-    '''
-    Generating Positive X, y dataset from the tables
-    '''
-    X, y = data_prep_pipeline(tables_subset)
-    savepkl(f'./data/xp_2D_{MAX_COL_LEN}-{MAX_ROW_LEN}.pkl', X)
-    savepkl(f'./data/yp_2D_{MAX_COL_LEN}-{MAX_ROW_LEN}.pkl', y)
+    X = data_prep_pipeline(read_all_tables)
+    savepkl(f'./data/wo_strnum3.0/x_tokenised.pkl', X)
+    # savepkl(f'./data/xp_{MAX_COL_LEN}-{MAX_ROW_LEN}.pkl', X)
