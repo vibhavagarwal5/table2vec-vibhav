@@ -14,8 +14,8 @@ from tqdm import tqdm
 from xgboost import XGBClassifier
 
 import utils
-from preprocess import read_table, tokenize_str, tokenize_table
-from utils import Config, loadpkl
+from data_preprocess2 import read_table, tokenize_str, tokenize_table, clean, shrink_cell_len
+from utils import Config, loadpkl, mp
 
 logger = logging.getLogger("app")
 
@@ -37,7 +37,7 @@ class TREC_data_prep():
                 row[j] = np.average(row[j], axis=0).tolist()
         x = np.array(table)
         shape = x.shape
-        table = x.reshape(shape[0]*shape[1], shape[2])
+        table = x.reshape(shape[0] * shape[1], shape[2])
         return table.tolist()
 
     def late_fusion(self, table, query):
@@ -135,7 +135,7 @@ class TREC_model():
 
     def getScore(self, row):
         arr = self.clf.predict_proba(np.array(row).reshape(1, -1))
-        return arr[0][1]+2*arr[0][2]
+        return arr[0][1] + 2 * arr[0][2]
 
     def generate_filtered_df(self, X, y):
         df = pd.concat([
@@ -147,7 +147,7 @@ class TREC_model():
         l = []
         dic = dict(df.query_id.value_counts())
         for i in dic:
-            for j in range(1, dic[i]+1):
+            for j in range(1, dic[i] + 1):
                 l.append(j)
 
         df_temp = pd.DataFrame()
@@ -160,23 +160,14 @@ class TREC_model():
         return df_temp
 
 
-def mp(df, func, num_partitions):
-    df_split = np.array_split(df, num_partitions)
-    # p = Pool(num_partitions)
-    # df = pd.concat(p.map(func, df_split))
-    with Pool(num_partitions) as p:
-        df = pd.concat(tqdm(p.imap(func, df_split), total=len(df_split)))
-    p.close()
-    p.join()
-    return df
-
-
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--path",
                         help="path for the scores")
     parser.add_argument("-d", "--data_prep",
-                        help="path for the scores", action='store_true')
+                        help="preprocess baseline data", action='store_true')
+    parser.add_argument("--data_path",
+                        help="preprocessed baseline data storage path")
     return parser.parse_args()
 
 
@@ -184,19 +175,20 @@ if __name__ == '__main__':
     args = get_args()
     start_time = time.time()
 
-    if args.data_prep:
+    if args.data_prep and args.data_path:
         print('Data preparation happening...')
         baseline_f = pd.read_csv('../global_data/features.csv')
 
         def t(baseline_f):
             baseline_f['table_tkn'] = baseline_f.table_id.apply(
-                lambda x: tokenize_table(read_table(x)['data']))
+                lambda x: shrink_cell_len(clean(tokenize_table(read_table(x)['data']))))
             baseline_f['query_tkn'] = baseline_f['query'].apply(
-                lambda x: tokenize_str(x))
+                lambda x: tokenize_str(x.lower()))
             return baseline_f
 
-        baseline_f = mp(baseline_f, t, 20)
-        baseline_f.to_csv('./data/baseline_f_tq-tkn.csv', index=False)
+        baseline_f = mp(baseline_f, t, 50)
+        baseline_f.to_csv(os.path.join(
+            args.data_path, 'baseline_f_tq-tkn.csv'), index=False)
 
     if args.path:
         config = Config()

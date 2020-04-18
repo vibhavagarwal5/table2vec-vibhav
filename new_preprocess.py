@@ -3,6 +3,7 @@ import math
 import os
 import random
 import re
+import unicodedata
 from collections import Counter
 from itertools import chain, zip_longest
 from multiprocessing import Pool
@@ -13,8 +14,8 @@ import spacy
 from spacy.tokenizer import Tokenizer
 from tqdm import tqdm
 
-from utils import loadpkl, savepkl, flatten_1_deg
 from data_viz import dataset_stats
+from utils import flatten_1_deg, loadpkl, savepkl
 
 # file paths
 ALL_TABLES_PATH_ORG = '../global_data/tables_redi2_1/'
@@ -28,6 +29,8 @@ LENGTH_PER_CELL = 20
 
 nlp = spacy.load("en_core_web_md")
 nlp.add_pipe(nlp.create_pipe("merge_entities"))
+nlp.add_pipe(nlp.create_pipe("merge_noun_chunks"))
+
 
 def read_table(table):
     if table.split('.')[-1] == 'json':
@@ -40,8 +43,8 @@ def read_table(table):
 def clean_entities(inp):
     if len(inp):
         if inp[0] == '[' and inp[-1] == ']':
-            # inp = inp.split('|')[0][1:]
-            inp = inp.split('|')[-1][:-1]
+            inp = inp.split('|')[0][1:]  # Take the 1st element
+            # inp = inp.split('|')[-1][:-1]  # Take the 2nd element
         return inp
     else:
         return inp
@@ -92,7 +95,9 @@ def tokenize_table(table):
 
 
 def tokenize_str(cell):
-    t = [token.orth_ for token in nlp(cell) if not (
+    a = unicodedata.normalize('NFKD', cell).encode(
+        'ascii', 'ignore').decode('utf-8')
+    t = [token.orth_ for token in nlp(a) if not (
         token.is_punct
         or len(token.orth_) < 4
         or token.is_space
@@ -100,24 +105,24 @@ def tokenize_str(cell):
         or token.is_currency
         or token.like_url
         or token.like_email
-        or token.orth_ == '>'
-        or token.orth_ == '<'
         or token.like_num
         or small_alphanum(token.orth_)
-        or token.ent_type_ in ['DATE','TIME','MONEY','PERCENT']
+        or token.ent_type_ in ['DATE', 'TIME', 'MONEY', 'PERCENT']
     )]
-    t = [i.replace(" ","_") for i in t]
+    t = [i.replace(" ", "_") for i in t]
     return t
 
 
 def contains_num(s):
     return any(c.isdigit() for c in s)
 
+
 def small_alphanum(s):
-    if len([i for i in s if i.isalpha()])<3:
+    if len([i for i in s if i.isalpha()]) < 3:
         return True
     else:
         return False
+
 
 def cell_overflow_cap(X):
     def clip(cell):
@@ -191,9 +196,9 @@ def remove_empty_tables(tables):
     tables = np.array(tables)
     e_t = []
     for i in range(len(tables)):
-        if np.array(tables[i]).size==0:
+        if np.array(tables[i]).size == 0:
             e_t.append(i)
-    tables =  np.delete(tables,e_t)  
+    tables = np.delete(tables, e_t)
     return tables.tolist()
 
 
@@ -216,8 +221,8 @@ def generate_vocab(X):
     Getting the vocab from the data
     '''
     vocab = list(set(count.keys()))
-    vocab.insert(0, '<PAD>')
     vocab.insert(0, '<UNK>')
+    vocab.insert(0, '<PAD>')
     print(f'vocab: {len(vocab)}\n')
     savepkl(
         f'./data/vocab_{MAX_COL_LEN}-{MAX_ROW_LEN}.pkl', vocab)
@@ -237,7 +242,7 @@ def data_prep_pipeline(X):
     '''
     # with Pool(50) as p:
     #     X = [tqdm(p.imap(tokenize_table, X), total=len(X))]
-    p = Pool(processes=50)
+    p = Pool(processes=75)
     X = p.map(tokenize_table, X)
     p.close()
     p.join()
@@ -247,7 +252,7 @@ def data_prep_pipeline(X):
     # Remove totally empty tables, generating vocab and cliiping cells to max_cell_len
     # '''
     # generate_vocab(X)
-    X = remove_empty_tables(X)
+    # X = remove_empty_tables(X)
     # X = cell_overflow_cap(X)
 
     X = np.array(X)
@@ -263,8 +268,8 @@ if __name__ == "__main__":
     tables_subset = list(
         set(tables_subset_3k+random.sample(all_tables, 20000)))
 
-    savepkl(f'./data/wo_strnum3.0/postive_tables_set.pkl', tables_subset)
+    savepkl(f'./data/wo_strnum3.0_wo_ent/postive_tables_set.pkl', tables_subset)
     read_all_tables = [read_table(js)['data'] for js in tables_subset]
     X = data_prep_pipeline(read_all_tables)
-    savepkl(f'./data/wo_strnum3.0/x_tokenised.pkl', X)
+    savepkl(f'./data/wo_strnum3.0_wo_ent/x_tokenised.pkl', X)
     # savepkl(f'./data/xp_{MAX_COL_LEN}-{MAX_ROW_LEN}.pkl', X)

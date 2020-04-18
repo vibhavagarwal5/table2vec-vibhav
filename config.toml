@@ -2,24 +2,21 @@
 output = "./output"
 
 [input_files]
-Xp_path = "./data/xp_2D_10-50_pad.pkl"
-Xn_path = "./data/xn_2D_10-50_pad.pkl"
-yp_path = "./data/yp_2D_10-50.pkl"
-yn_path = "./data/yn_2D_10-50.pkl"
-vocab_path = "./data/vocab_2D_10-50_complete.pkl"
-baseline_f = './data/baseline_f_tq-tkn.csv'
+Xp_path = "./data/wo_strnum3.0_wo_ent/x_tokenised_preprocessed_pad.pkl"
+vocab_path = "./data/wo_strnum3.0_wo_ent/vocab_3-11.pkl"
+baseline_f = './data/wo_strnum3.0_wo_ent/baseline_f_tq-tkn.csv'
 
 [table_prep_params]
-MAX_COL_LEN = 10
-MAX_ROW_LEN = 50
+MAX_COL_LEN = 3
+MAX_ROW_LEN = 11
 LENGTH_PER_CELL = 20
 
 [model_params]
 seed = 42
-batch_size = 32
+batch_size = 64
 embedding_dim = 100
-epochs = 1
-otp_lr = 3e-5
+epochs = 20
+otp_lr = 3e-6
 
 [model_props]
 viz_path = 'viz'

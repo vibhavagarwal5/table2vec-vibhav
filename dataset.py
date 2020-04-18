@@ -1,9 +1,10 @@
 import argparse
-from torch.multiprocessing import Pool
+import os
 import time
 
 import numpy as np
 import torch
+from torch.multiprocessing import Pool
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
@@ -17,11 +18,11 @@ class T2VDataset(Dataset):
         self.table_prep_params = config['table_prep_params']
         self.vocab = vocab
 
-        # p = Pool(processes=20)
-        # X = p.map(self.pad_table, X)
-        # p.close()
-        # p.join()
+        # X = X.tolist()
+        # for i in range(len(X)):
+        #     X[i] = self.pad_table(X[i], '<PAD>')
         # X = self.table_words2index(X)
+        # print(np.array(X).shape)
 
         self.X = torch.tensor(X, device=device)
         self.y = torch.tensor(y.tolist(), device=device, dtype=torch.float)
@@ -32,25 +33,36 @@ class T2VDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
 
-    # NOTE: MAKE THIS FAST...
-    def pad_table(self, table):
-        rows = len(table)
-        for row in table:
-            for cell in row:
-                for i in range(0, self.table_prep_params['LENGTH_PER_CELL']-len(cell)):
-                    cell.append('<PAD>')
-            for j in range(0, self.table_prep_params['MAX_COL_LEN']-len(row)):
-                row.append(['<PAD>']*self.table_prep_params['LENGTH_PER_CELL'])
-        for i in range(0, self.table_prep_params['MAX_ROW_LEN']-rows):
-            table.append([['<PAD>']*self.table_prep_params['LENGTH_PER_CELL']]
-                         * self.table_prep_params['MAX_COL_LEN'])
-        return table
+    @staticmethod
+    def pad_table(table_prep_params, table, val):
+        rows, cols = np.array(table).shape[:2]
+        cols2fill = table_prep_params['MAX_COL_LEN'] - cols
+        rows2fill = table_prep_params['MAX_ROW_LEN'] - rows
 
-    def table_words2index(self, tables):
-        w2i = {w: i for i, w in enumerate(self.vocab)}
-        for i, t in enumerate(tables):
-            tables[i] = np.vectorize(
-                lambda y: w2i[y])(np.array(t)).tolist()
+        for r in table:
+            for cell in r:
+                if len(cell) == 0:
+                    cell.append(val)
+
+        full_t = np.full(
+            (
+                table_prep_params['MAX_ROW_LEN'],
+                table_prep_params['MAX_COL_LEN'],
+                1), val).tolist()
+
+        for i in range(int(rows2fill / 2), int(rows2fill / 2) + rows):
+            full_t[i][int(cols2fill / 2):int(cols2fill / 2) +
+                      cols] = table[i - int(rows2fill / 2)]
+        return full_t
+
+    @staticmethod
+    def table_words2index(vocab, tables):
+        w2i = {w: i for i, w in enumerate(vocab)}
+        for t in tables:
+            for r in t:
+                for c in r:
+                    for i, w in enumerate(c):
+                        c[i] = w2i[w]
         return tables
 
 
@@ -59,51 +71,39 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-p", "--pad_data_prep", help="path for the scores", action='store_true')
+    parser.add_argument("--path",
+                        help="path for the datafiles")
     args = parser.parse_args()
 
-    config = Config()
+    if args.pad_data_prep and args.path:
+        Xp_path = args.path
+        X = loadpkl(os.path.join(Xp_path, 'x_tokenised_preprocessed.pkl'))
+        vocab = loadpkl(os.path.join(Xp_path, 'vocab_3-11.pkl'))
+        table_prep_params = {
+            "MAX_COL_LEN": 3,
+            "MAX_ROW_LEN": 11
+        }
+        print(X.shape, len(vocab))
 
-    X = loadpkl("./data/xp_2D_10-50.pkl")
-    y = loadpkl("./data/yp_2D_10-50.pkl")
-    vocab = loadpkl(config['input_files']['vocab_path'])
-    table_prep_params = config['table_prep_params']
-    print(X.shape, y.shape, len(vocab))
+        X = X.tolist()
+        for i in range(len(X)):
+            X[i] = T2VDataset.pad_table(table_prep_params, X[i], '<PAD>')
 
-    if args.pad_data_prep:
-        def pad_table(table):
-            rows = len(table)
-            for row in table:
-                for cell in row:
-                    for i in range(0, table_prep_params['LENGTH_PER_CELL']-len(cell)):
-                        cell.append('<PAD>')
-                for j in range(0, table_prep_params['MAX_COL_LEN']-len(row)):
-                    row.append(['<PAD>']*table_prep_params['LENGTH_PER_CELL'])
-            for i in range(0, table_prep_params['MAX_ROW_LEN']-rows):
-                table.append([['<PAD>']*table_prep_params['LENGTH_PER_CELL']]
-                             * table_prep_params['MAX_COL_LEN'])
-            return table
-
-        def table_words2index(tables):
-            w2i = {w: i for i, w in enumerate(vocab)}
-            for i, t in enumerate(tables):
-                tables[i] = np.vectorize(
-                    lambda y: w2i[y])(np.array(t)).tolist()
-            return tables
-
-        p = Pool(processes=40)
-        X = p.map(pad_table, X)
-        p.close()
-        p.join()
-        X = table_words2index(X)
+        print(X[12])
+        X = T2VDataset.table_words2index(vocab, X)
         X = np.array(X)
+        print(X[12])
         print(X.shape)
-        savepkl('./data/xp_2D_10-50_pad.pkl', X)
+        savepkl(os.path.join(Xp_path, 'x_tokenised_preprocessed_pad.pkl'), X)
+        # savepkl(
+        #     f"{Xp_path.split('.pkl')[0]}_pad.pkl", X)
     else:
+        config = Config()
         device = torch.device(
             f"cuda:{1}" if torch.cuda.is_available() else 'cpu')
-        dataset = T2VDataset(X, y, vocab, device, config)
+        dataset = T2VDataset(X, vocab, device, config)
         dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
         X_, y_ = next(iter(dataloader))
         print(X_.shape, y_.shape)
 
-    print(time.time()-start)
+    print(time.time() - start)

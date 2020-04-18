@@ -1,10 +1,14 @@
-import pickle
 import argparse
-import sys
-import os
 import logging
+import os
+import pickle
+import sys
 from datetime import datetime
 from itertools import chain, zip_longest
+from multiprocessing import Pool
+
+import numpy as np
+import pandas as pd
 
 from .config import Config
 
@@ -82,3 +86,22 @@ def savepkl(fname, obj):
 
 def flatten_1_deg(arr):
     return list(chain(*arr))
+
+
+def pool_fn(fn, inp, processes):
+    p = Pool(processes=processes)
+    out = p.map(fn, inp)
+    p.close()
+    p.join()
+    return out
+
+
+def mp(df, func, num_partitions):
+    df_split = np.array_split(df, num_partitions)
+    p = Pool(num_partitions)
+    df = pd.concat(p.map(func, df_split))
+    # with Pool(num_partitions) as p:
+    #     df = pd.concat(tqdm(p.imap(func, df_split), total=len(df_split)))
+    p.close()
+    p.join()
+    return df

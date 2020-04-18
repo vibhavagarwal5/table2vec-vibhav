@@ -3,8 +3,8 @@
 -   To prepare the data
 
     -   Run **`python preprocess.py`** to generate the positive and negative sample data.
-    -   Aditionally, run **`python trec.py --data_prep`** flag to prepare the tokenized version of the annotated table and query dataset.
-    -   Run **`python dataset.py --data_type='-' -p`** and **`python dataset.py --data_type='+' -p`** to pregenerate the padded postive/negative dataset.
+    -   Aditionally, run **`python trec.py -d`** flag to prepare the tokenized version of the annotated table and query dataset.
+    -   Run **`python dataset.py -p`** and **`python dataset.py -p`** to pregenerate the padded postive/negative dataset.
 
 -   Run **`python index.py`** with the following flags:
 

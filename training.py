@@ -14,15 +14,15 @@ from sklearn.metrics import (accuracy_score, average_precision_score, f1_score,
                              precision_recall_curve, precision_score,
                              recall_score, roc_auc_score)
 from sklearn.model_selection import train_test_split
-from torch.utils.data import ConcatDataset, DataLoader, Dataset, random_split
+from torch.utils.data import ConcatDataset, DataLoader, random_split
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 import utils
 from dataset import T2VDataset
-from trec import TREC_data_prep, TREC_model, mp
+from trec import TREC_data_prep, TREC_model
 from TREC_score import ndcg_pipeline
-from utils import flatten_1_deg, loadpkl, savepkl
+from utils import flatten_1_deg, loadpkl, savepkl, mp
 
 logger = logging.getLogger("app")
 
@@ -30,7 +30,6 @@ logger = logging.getLogger("app")
 def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, writers, device):
     def trec_eval(model):
         logger.info('TREC model building...')
-
         baseline_f = pd.read_csv(config['input_files']['baseline_f'])
         trec = TREC_data_prep(model=model, vocab=vocab)
         baseline_f = mp(
@@ -47,81 +46,65 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
                                                     config['trec']['trec_path'], config['trec']['query_file_path'])
         return ndcg_score, ndcg_score_dict
 
-    def get_rand_table():
-        rand_table_name = random.choice(range(len(Xp)))
-        t_d = Xp[rand_table_name].tolist()
-        # print(type(Xp), type(t_d))
-        numDataRows, numCols = np.array(t_d).shape[:2]
-
-        while numDataRows == 0 or numCols == 0:
-            # print('sample table again coz 0')
-            t_d, rand_table_name = get_rand_table()
-        return t_d, rand_table_name
-
     def generate_rand_cell(table, table_lst):
+        def get_rand_table():
+            rand_table_name = random.choice(range(len(all_tables)))
+            t_d = all_tables[rand_table_name].tolist()
+            return t_d, rand_table_name
+
         table_data, table_name = get_rand_table()
-        # print(type(table_data))
         numDataRows, numCols = np.array(table_data).shape[:2]
         rand_row_ix = random.choice(list(range(numDataRows)))
         rand_col_ix = random.choice(list(range(numCols)))
         rand_cell = table_data[rand_row_ix][rand_col_ix]
-        # print(type(rand_cell))
 
-        while (
-            rand_cell in flatten_1_deg(table)
-            or table_name in table_lst
-            or rand_cell.count(1) == len(rand_cell)
-        ):
-            # print('sample table again coz repeat')
-            rand_cell, table_name = generate_rand_cell(table, table_lst)
-
+        # while (
+        #     # True
+        #     # rand_cell in flatten_1_deg(table) or
+        #     # table_name in table_lst or
+        #     rand_cell.count(1) == len(rand_cell)
+        # ):
+        #     # if table_name in table_lst:
+        #     #     return generate_rand_cell(table, table_lst)
+        #     # elif rand_cell.count(1) == len(rand_cell):
+        #     #     rand_row_ix = random.choice(list(range(numDataRows)))
+        #     #     rand_col_ix = random.choice(list(range(numCols)))
+        #     #     rand_cell = table_data[rand_row_ix][rand_col_ix]
+        #     # else:
+        #     #     break
+        #     # print('sample table again coz repeat')
+        #     rand_cell, table_name = generate_rand_cell(table, table_lst)
         return rand_cell, table_name
 
-    def generate_neg_table(_):
+    def generate_neg_table(inp):
         t_l = []
         t = []
-
-        rand_rows = random.choice(
-            list(range(3, table_prep_params['MAX_ROW_LEN'])))
-        rand_cols = random.choice(
-            list(range(2, table_prep_params['MAX_COL_LEN'])))
-
-        for i in range(rand_rows):
+        for i in range(config['table_prep_params']['MAX_ROW_LEN']):
             r = []
-            for j in range(rand_cols):
+            for j in range(config['table_prep_params']['MAX_COL_LEN']):
                 c, t_name = generate_rand_cell(t, t_l)
                 r.append(c)
                 t_l.append(t_name)
             t.append(r)
-        # t = pad_table(t)
-        print(_)
         return t
 
-    def pad_table(table):
-        for row in table:
-            for j in range(0, table_prep_params['MAX_COL_LEN']-len(row)):
-                row.append([1]*table_prep_params['LENGTH_PER_CELL'])
-        for i in range(0, table_prep_params['MAX_ROW_LEN']-len(table)):
-            table.append([[1]*table_prep_params['LENGTH_PER_CELL']]
-                         * table_prep_params['MAX_COL_LEN'])
-        return table
-
     def generate_neg(size):
-        # Xn = [generate_neg_table(i) for i in range(size)]
-        # with Pool(40) as p:
-        #     Xn = [tqdm(p.imap(generate_neg_table, range(size)), total=size)]
-        p = Pool(processes=20)
-        Xn = p.map(generate_neg_table, range(size))
-        p.close()
-        p.join()
-        return Xn
+        Xn = [generate_neg_table(i) for i in range(size)]
+        # p = Pool(processes=20)
+        # Xn = p.map(generate_neg_table, range(size))
+        # p.close()
+        # p.join()
+
+        yn = [0]*size
+        Xn = torch.tensor(Xn, device=device)
+        yn = torch.tensor(yn, dtype=torch.float, device=device)
+        return Xn, yn.reshape((-1, 1))
 
     Xp, yp = pos_sample
     # Xn, yn = neg_sample
     train_writer, test_writer = writers
     epochs = config['model_params']['epochs']
     model_name = os.path.join(output_dir, config['model_props']['model_name'])
-    table_prep_params = config['table_prep_params']
 
     # train_writer.add_graph(model, torch.ones(
     #     [1, 50, 10, 20], dtype=torch.long, device=device))
@@ -140,7 +123,6 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
     train_dataset_p, test_dataset_p = random_split(
         dataset_p, [train_size, test_size])
 
-    # logger.info(f"+ve trainset: {len(train_dataset_p)}, +ve testset: {len(test_dataset_p)}")
     start_time_total = time.time()
     ndcg_scores_total = {}
 
@@ -151,14 +133,14 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
         '''
         Splitting the -ve dataset into train and test sets every epoch
         '''
-        # size = len(Xp)
-        # print(size, Xp.shape)
-        # Xn = generate_neg(size)
-        # yn = [0]*size
+        # # p = Pool(processes=5)
+        # # Xn = p.map(generate_neg_table, range(int(len(Xp)*1.2)))
+        # # p.close()
+        # # p.join()
+        # Xn = [generate_neg_table(i) for i in range(int(len(Xp)*1.2))]
         # Xn = np.array(Xn)
-        # yn = np.array(yn)
         # print(Xn.shape)
-        # dataset_n = T2VDataset(Xn, yn, vocab, device, config)
+        # dataset_n = T2VDataset(Xn, -1, vocab, device, config)
 
         # # train_Xn, test_Xn = train_test_split(Xn, train_size=0.7)
         # # train_yn, test_yn = train_test_split(yn, train_size=0.7)
@@ -180,14 +162,20 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
         # Xn_ = np.array(random.sample(train_Xn.tolist(), len(train_dataset_p)))
         # yn_ = np.array(random.sample(train_yn.tolist(), len(train_dataset_p)))
         # train_dataset_n = T2VDataset(Xn_, yn_, vocab, device, config)
-
         # train_dataset = ConcatDataset([train_dataset_p, train_dataset_n])
         dataloader = DataLoader(
             train_dataset_p, batch_size=config['model_params']['batch_size'], shuffle=True)
-        # logger.info(f"-ve X trainset: {Xn_.shape}, -ve y trainset: {yn_.shape}, -ve trainset: {len(train_dataset_n)}, total trainset: {len(train_dataset)}")
 
         for X_batch, y_batch in tqdm(dataloader):
-            y_pred, y_batch_total = model(X_batch, y_batch)
+            all_tables = X_batch
+            Xn, yn = generate_neg(len(X_batch))
+            total_inputs = torch.cat((X_batch, Xn), dim=0)
+            y_batch_total = torch.cat((y_batch, yn), dim=0)
+            # shuffle = torch.randperm(len(total_inputs))
+            # total_inputs = total_inputs[shuffle]
+            # y_batch_total = y_batch_total[shuffle]
+
+            y_pred = model(total_inputs)
             loss = loss_fn(y_pred, y_batch_total)
             y_actual_train += list(y_batch_total.cpu().data.numpy())
             y_p = torch.round(y_pred)
@@ -210,7 +198,9 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
         logger.info(
             f"Training - Loss : {loss_per_epoch}, Accuracy : {accuracy}, Precision : {precision}, Recall : {recall}, F1-score : {f1}")
 
-        '''--------------------------------------------------------------------------------------'''
+        '''
+        --------------------------------------------------------------------------------------
+        '''
 
         '''
         Testing
@@ -225,16 +215,24 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
         # Xn_ = np.array(random.sample(test_Xn.tolist(), len(test_dataset_p)))
         # yn_ = np.array(random.sample(test_yn.tolist(), len(test_dataset_p)))
         # test_dataset_n = T2VDataset(Xn_, yn_, vocab, device, config)
-        test_dataset = ConcatDataset([test_dataset_p, test_dataset_n])
+        # test_dataset = ConcatDataset([test_dataset_p, test_dataset_n])
         dataloader = DataLoader(
-            test_dataset, batch_size=config['model_params']['batch_size'], shuffle=True)
-        # logger.info(f"-ve X testset: {Xn_.shape}, -ve y testset: {yn_.shape}, -ve testset: {len(test_dataset_n)}, total testset: {len(test_dataset)}")
+            test_dataset_p, batch_size=config['model_params']['batch_size'], shuffle=True)
 
         for X_batch, y_batch in tqdm(dataloader):
-            y_pred = model(X_batch)
-            loss = loss_fn(y_pred, y_batch)
+
+            all_tables = X_batch
+            Xn, yn = generate_neg(len(X_batch))
+            total_inputs = torch.cat((X_batch, Xn), dim=0)
+            y_batch_total = torch.cat((y_batch, yn), dim=0)
+            # shuffle = torch.randperm(len(total_inputs))
+            # total_inputs = total_inputs[shuffle]
+            # y_batch_total = y_batch_total[shuffle]
+
+            y_pred = model(total_inputs)
+            loss = loss_fn(y_pred, y_batch_total)
+            y_actual_test += list(y_batch_total.cpu().data.numpy())
             y_p = torch.round(y_pred)
-            y_actual_test += list(y_batch.cpu().data.numpy())
             y_pred_test += list(y_p.cpu().data.numpy())
             loss_per_epoch += loss.item()
 
@@ -262,7 +260,6 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
                 else:
                     ndcg_scores_total[ndcg_type].append(
                         ndcg_score_dict[ndcg_type])
-            # train_writer.add_scalars(f'NDCG scores', ndcg_score_dict, epoch)
 
         end_time_epoch = time.time()-start_time_epoch
         logger.info(f"Time spent in this epoch : {end_time_epoch}\n")

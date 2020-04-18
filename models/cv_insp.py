@@ -5,7 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from preprocess import loadpkl, savepkl, print_table
 
 class Table2Vec(nn.Module):
 
@@ -15,16 +14,18 @@ class Table2Vec(nn.Module):
         self.embeddings = nn.Embedding(vocab_size, embedding_dim)
         self.embeddings.weight.requires_grad = True
         self.cnn_layers = nn.Sequential(
-            nn.Conv2d(embedding_dim, 128, kernel_size=3),
+            nn.Conv2d(embedding_dim, 128, kernel_size=(3, 2)),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(128, 64, kernel_size=3),
+            nn.MaxPool2d(kernel_size=2),
+            nn.Conv2d(128, 64, kernel_size=(2, 1)),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
+            # nn.MaxPool2d(kernel_size=2),
         )
         self.linear_layers = nn.Sequential(
-            nn.Linear(64*11*1, 256),
+            nn.Linear(64*3*1, 256),
             nn.ReLU(inplace=True),
+            # nn.Linear(256, 64),
+            # nn.ReLU(inplace=True),
             nn.Linear(256, 1),
             nn.Sigmoid()
         )

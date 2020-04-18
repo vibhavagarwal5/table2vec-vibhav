@@ -8,7 +8,10 @@ def get_comments(output_dir):
     comments = []
     
     for conf_path in path.rglob("config.toml"):
-        comment = toml.load(conf_path.resolve())["comment"]
+        try:
+            comment = toml.load(conf_path.resolve())["comment"]
+        except:
+            comment = ''
         comments.append((conf_path.parent.name, comment))
     
     
