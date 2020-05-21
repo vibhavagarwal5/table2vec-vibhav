@@ -62,7 +62,10 @@ class T2VDataset(Dataset):
             for r in t:
                 for c in r:
                     for i, w in enumerate(c):
-                        c[i] = w2i[w]
+                        try:
+                            c[i] = w2i[w]
+                        except:
+                            c[i] = w2i['<UNK>']
         return tables
 
 
@@ -73,30 +76,50 @@ if __name__ == '__main__':
         "-p", "--pad_data_prep", help="path for the scores", action='store_true')
     parser.add_argument("--path",
                         help="path for the datafiles")
+    parser.add_argument("--xp_file",
+                        help="Positive tables file")
+    parser.add_argument("--vocab",
+                        help="Vocab file")
+    parser.add_argument("--max_col_len",
+                        help="Max Column Length", type=int)
+    parser.add_argument("--max_row_len",
+                        help="Max Row Length", type=int)
     args = parser.parse_args()
+    print(args)
 
-    if args.pad_data_prep and args.path:
+    if args.pad_data_prep and \
+            args.path and \
+            args.xp_file and \
+            args.vocab and \
+            args.max_row_len and \
+            args.max_col_len:
+
         Xp_path = args.path
-        X = loadpkl(os.path.join(Xp_path, 'x_tokenised_preprocessed.pkl'))
-        vocab = loadpkl(os.path.join(Xp_path, 'vocab_3-11.pkl'))
+        X = loadpkl(os.path.join(Xp_path, args.xp_file))
+        vocab = loadpkl(os.path.join(Xp_path, args.vocab))
         table_prep_params = {
-            "MAX_COL_LEN": 3,
-            "MAX_ROW_LEN": 11
+            "MAX_COL_LEN": args.max_col_len,
+            "MAX_ROW_LEN": args.max_row_len
         }
         print(X.shape, len(vocab))
 
         X = X.tolist()
+        print('Before padding')
+        print(X[12])
         for i in range(len(X)):
             X[i] = T2VDataset.pad_table(table_prep_params, X[i], '<PAD>')
-
+        print('After padding')
         print(X[12])
+
         X = T2VDataset.table_words2index(vocab, X)
         X = np.array(X)
+        print('After w2i change')
         print(X[12])
         print(X.shape)
-        savepkl(os.path.join(Xp_path, 'x_tokenised_preprocessed_pad.pkl'), X)
-        # savepkl(
-        #     f"{Xp_path.split('.pkl')[0]}_pad.pkl", X)
+
+        temp = args.xp_file.split('.')
+        temp[0] = temp[0] + '_pad_1'
+        # savepkl(os.path.join(Xp_path, '.'.join(temp)), X)
     else:
         config = Config()
         device = torch.device(

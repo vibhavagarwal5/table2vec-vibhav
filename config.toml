@@ -2,25 +2,26 @@
 output = "./output"
 
 [input_files]
-Xp_path = "./data/wo_strnum3.0_wo_ent/x_tokenised_preprocessed_pad.pkl"
-vocab_path = "./data/wo_strnum3.0_wo_ent/vocab_3-11.pkl"
-baseline_f = './data/wo_strnum3.0_wo_ent/baseline_f_tq-tkn.csv'
+Xp_path = "./data/w_all_data/x_tokenised_preprocessed_pad_1.pkl"
+vocab_path = "./data/w_all_data/vocab_5-15_1.pkl"
+baseline_f = './data/w_all_data/baseline_f_tq-tkn.csv'
 
 [table_prep_params]
-MAX_COL_LEN = 3
-MAX_ROW_LEN = 11
+MAX_COL_LEN = 5
+MAX_ROW_LEN = 15
 LENGTH_PER_CELL = 20
 
 [model_params]
 seed = 42
 batch_size = 64
 embedding_dim = 100
-epochs = 20
-otp_lr = 3e-6
+epochs = 5
+opt_lr = 1e-5
 
 [model_props]
 viz_path = 'viz'
 model_name = "model.pt"
+print_every = 700
 
 [trec]
 trec_path = '../trec_eval/trec_eval'

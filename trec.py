@@ -21,24 +21,37 @@ logger = logging.getLogger("app")
 
 
 class TREC_data_prep():
-    def __init__(self, model, vocab):
+    def __init__(self, embeddings, vocab):
         self.w2i = {w: i for i, w in enumerate(vocab)}
-        self.embeddings = model.embeddings.weight.cpu().data.numpy()
+        self.embeddings = embeddings.weight.cpu().data.numpy()
 
-    def get_emb(self, table):
-        if len(table) == 0:
+    def get_emb(self, inp, typ):
+        if len(inp) == 0:
             return [self.embeddings[self.w2i['<PAD>']]]
-        for row in table:
-            for j, cell in enumerate(row):
-                if len(row[j]) == 0:
-                    row[j].append('<PAD>')
-                for i, item in enumerate(cell):
-                    cell[i] = self.embeddings[self.w2i[item]]
-                row[j] = np.average(row[j], axis=0).tolist()
-        x = np.array(table)
-        shape = x.shape
-        table = x.reshape(shape[0] * shape[1], shape[2])
-        return table.tolist()
+        if typ == 'table':
+            for row in inp:
+                for j, cell in enumerate(row):
+                    if len(row[j]) == 0:
+                        row[j].append('<PAD>')
+                    for i, item in enumerate(cell):
+                        try:
+                            v = self.w2i[item]
+                        except:
+                            v = self.w2i['<UNK>']
+                        cell[i] = self.embeddings[v]
+                    row[j] = np.average(row[j], axis=0).tolist()
+            x = np.array(inp)
+            shape = x.shape
+            inp = x.reshape(shape[0] * shape[1], shape[2])
+            return inp.tolist()
+        elif typ == 'query':
+            for i, val in enumerate(inp):
+                try:
+                    v = self.w2i[val]
+                except:
+                    v = self.w2i['<UNK>']
+                inp[i] = self.embeddings[v]
+            return inp
 
     def late_fusion(self, table, query):
         s = []
@@ -59,9 +72,9 @@ class TREC_data_prep():
 
     def pipeline(self, baseline_f):
         baseline_f['table_emb'] = baseline_f.table_tkn.apply(
-            lambda x: self.get_emb(eval(x)))
+            lambda x: self.get_emb(eval(x), 'table'))
         baseline_f['query_emb'] = baseline_f.query_tkn.apply(
-            lambda x: [self.embeddings[self.w2i[item]] for item in eval(x)])
+            lambda x: self.get_emb(eval(x), 'query'))
 
         baseline_f['early_fusion'] = baseline_f.apply(
             lambda x: self.early_fusion(x['table_emb'], x['query_emb']), axis=1)
@@ -111,7 +124,7 @@ class TREC_model():
     def makeModel_getdf(self, X_train, X_test, y_train, y_test):
         # self.clf = XGBClassifier(
             # tree_method='gpu_hist',
-            # gpu_id=self.config['cuda_no']
+            # gpu_id=self.config['gpu']
             # )
         # self.clf = AdaBoostClassifier(
         #     n_estimators=1000,
@@ -197,7 +210,7 @@ if __name__ == '__main__':
         model_load = torch.load(os.path.join(output_dir, 'model.pt'))
         baseline_f = pd.read_csv(config['input_files']['baseline_f'])
 
-        trec = TREC_data_prep(model=model_load, vocab=vocab)
+        trec = TREC_data_prep(embeddings=model_load.embeddings, vocab=vocab)
         baseline_f = mp(
             df=baseline_f, func=trec.pipeline, num_partitions=20)
         baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)

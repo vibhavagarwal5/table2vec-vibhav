@@ -22,7 +22,8 @@ class Table2Vec(nn.Module):
             # nn.MaxPool2d(kernel_size=2),
         )
         self.linear_layers = nn.Sequential(
-            nn.Linear(64*3*1, 256),
+            # nn.Linear(64 * 3 * 1, 256),
+            nn.Linear(64 * 5 * 2, 256),
             nn.ReLU(inplace=True),
             # nn.Linear(256, 64),
             # nn.ReLU(inplace=True),
@@ -34,8 +35,10 @@ class Table2Vec(nn.Module):
         emb = self.embeddings(inputs)
         emb = emb.mean(3)
         emb = emb.permute(0, 3, 1, 2)
+        # print(emb.shape)
 
         x = self.cnn_layers(emb)
-        x = x.view(x.shape[0], -1)
+        x = x.reshape((x.shape[0], -1))
         x = self.linear_layers(x)
+        # print(x.shape)
         return x

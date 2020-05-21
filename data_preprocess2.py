@@ -9,19 +9,40 @@ from collections import Counter, OrderedDict
 import numpy as np
 import pandas as pd
 import spacy
+from spacy.util import filter_spans
 from tqdm import tqdm
 
 from utils import flatten_1_deg, loadpkl, savepkl, pool_fn
 
 nlp = spacy.load("en_core_web_md")
-nlp.add_pipe(nlp.create_pipe("merge_entities"))
-nlp.add_pipe(nlp.create_pipe("merge_noun_chunks"))
+# nlp.add_pipe(nlp.create_pipe("merge_entities"))
+# nlp.add_pipe(nlp.create_pipe("merge_noun_chunks"))
 
 OUTPUT_DIR = '../global_data/all_tables'
 all_tables = os.listdir(OUTPUT_DIR)
-PATH = './data/wo_strnum3.0_wo_ent_'
+PATH = './data/w_all_data'
 MAX_ROW_LEN = 15
 MAX_COL_LEN = 5
+
+
+def merge_entities_and_nouns(doc):
+    assert doc.is_parsed
+    with doc.retokenize() as retokenizer:
+        seen_words = set()
+        for ent in filter_spans(list(doc.ents)):
+            attrs = {"tag": ent.root.tag,
+                     "dep": ent.root.dep, "ent_type": ent.label}
+            retokenizer.merge(ent, attrs=attrs)
+            seen_words.update(w.i for w in ent)
+        for np in filter_spans(list(doc.noun_chunks)):
+            if any(w.i in seen_words for w in np):
+                continue
+            attrs = {"tag": np.root.tag, "dep": np.root.dep}
+            retokenizer.merge(np, attrs=attrs)
+        return doc
+
+
+# nlp.add_pipe(merge_entities_and_nouns)
 
 
 def read_table(table):
@@ -53,7 +74,7 @@ def tokenize_table(table):
 def tokenize_str(cell):
     a = unicodedata.normalize('NFKD', cell).encode(
         'ascii', 'ignore').decode('utf-8')
-    t = [token.orth_ for token in nlp(a) if not (
+    t = [token.orth_ for token in merge_entities_and_nouns(nlp(a)) if not (
         token.is_punct
         or len(token.orth_) < 4
         or token.is_space
@@ -334,22 +355,18 @@ def remove_emptiness(X):
 #     return table
 
 
-if __name__ == '__main__':
-    baseline_f = pd.read_csv('../global_data/features.csv')
-    tables_subset_3k = list(baseline_f['table_id'])
-    tables_subset = list(set(
-        tables_subset_3k + random.sample(all_tables, 20000)
-    ))
-    savepkl(f'{PATH}/postive_tables_set.pkl', tables_subset)
+def preprocess_pipeline(tables_subset, index):
+    savepkl(f'{PATH}/postive_tables_set_{index}.pkl', tables_subset)
     read_all_tables = [read_table(js)['data'] for js in tables_subset]
 
     print(len(read_all_tables))
 
     print('---Tokenizing---\n\n')
-    X = pool_fn(tokenize_table, read_all_tables, 75)
+    X = remove_empty_tables(read_all_tables)
+    X = pool_fn(tokenize_table, X, 75)
     X = np.array(X)
     print(X.shape)
-    savepkl(f'{PATH}/x_tokenised.pkl', X)
+    savepkl(f'{PATH}/x_tokenised_{index}.pkl', X)
 
     print("---Cleaning for some spl characters and patterns and merging back tokens to reduce token space---\n\n")
     X = pool_fn(clean, X, 75)
@@ -372,10 +389,27 @@ if __name__ == '__main__':
 
     for i, table in enumerate(X):
         X[i] = shrink_cell_len(table)
-    savepkl(f'{PATH}/x_tokenised_preprocessed.pkl', X)
+    savepkl(f'{PATH}/x_tokenised_preprocessed_{index}.pkl', X)
 
-    print("---Generating Vocab---\n\n")
-    generate_vocab(X)
+    # print("---Generating Vocab---\n\n")
+    # generate_vocab(X)
+
+
+if __name__ == '__main__':
+    baseline_f = pd.read_csv('../global_data/features.csv')
+    tables_subset_3k = list(baseline_f['table_id'])
+    # tables_subset = list(set(
+    #     tables_subset_3k + random.sample(all_tables, 10)
+    # ))
+    tables_subset = list(set(
+        tables_subset_3k + all_tables
+    ))
+    total_splits = 20
+    split_size = int(len(tables_subset) / total_splits)
+    for i in range(total_splits):
+        print(f"{i*split_size} : {(i+1)*split_size} computing now")
+        preprocess_pipeline(
+            tables_subset[i * split_size:(i + 1) * split_size], i)
 
     # all_cells, all_cells_len, c_len, c_len_val, cell_len_distr = cell_stats(X)
     # sum([a * b for a, b in cell_len_distr[1:]]) / \

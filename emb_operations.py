@@ -6,13 +6,17 @@ import umap
 import matplotlib.pyplot as plt
 import torch
 
-from preprocess import loadpkl
+from utils import loadpkl
 
 
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--path",
                         help="path for the scores")
+    parser.add_argument("--model",
+                        help="model file")
+    parser.add_argument("--vocab_path",
+                        help="vocab file")
     return parser.parse_args()
 
 
@@ -49,9 +53,15 @@ def dim_red_plot(plt_type, emb, vocab, output_dir, n_components=2, random_state=
 
 if __name__ == "__main__":
     args = get_args()
-    output_dir = f'./output/{args.path}'
-    model = torch.load(os.path.join(output_dir, 'model.pt'))
-
-    vocab = loadpkl('./data/vocab_2D_10-50_complete.pkl')
+    model = torch.load(os.path.join(args.path, args.model))
+    vocab = loadpkl(args.vocab_path)
     emb = model['embeddings.weight'].cpu().data.numpy()
-    dim_red_plot('umap', emb, vocab, output_dir, 3)
+    dim_red_plot('umap', emb, vocab, args.path, 3)
+
+    # e1 = torch.load(
+    #     './output/5_20_22_0_39/model_1.pt')['embeddings.weight'].cpu().data
+    # e2 = torch.load(
+    #     './output/5_20_22_0_39/model_0.pt')['embeddings.weight'].cpu().data
+    # print(e1.shape, e2.shape)
+    # print(torch.equal(e1,e2))
+    # print(torch.sum(torch.sub(e1, e2)))

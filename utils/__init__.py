@@ -47,7 +47,7 @@ def load_config_args(args):
         config.load(args.config)
 
     config.add_to_config("comment", args.comment)
-    config.add_to_config("cuda_no", args.cuda_no)
+    config.add_to_config("gpu", args.gpu)
     config['model_props']['type'] = args.model_type
     config.add_to_config("model_props", config['model_props'])
     return config
@@ -105,3 +105,10 @@ def mp(df, func, num_partitions):
     p.close()
     p.join()
     return df
+
+
+def print_table(table):
+    for row in table:
+        for col in row:
+            print(col)
+        print()

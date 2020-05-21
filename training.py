@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import (accuracy_score, average_precision_score, f1_score,
@@ -18,20 +19,34 @@ from torch.utils.data import ConcatDataset, DataLoader, random_split
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-import utils
+import models
 from dataset import T2VDataset
 from trec import TREC_data_prep, TREC_model
 from TREC_score import ndcg_pipeline
-from utils import flatten_1_deg, loadpkl, savepkl, mp
+from utils import flatten_1_deg, loadpkl, make_dirs, mp, savepkl
 
 logger = logging.getLogger("app")
+prev_embd = None
 
 
-def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, writers, device):
-    def trec_eval(model):
+def print_table(table, vocab):
+    i2w = {i: w for i, w in enumerate(vocab)}
+    table = table.tolist()
+    for r in table:
+        for c in r:
+            for i, w in enumerate(c):
+                c[i] = i2w[int(w)]
+        logger.info(r)
+
+
+# def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, writers, device):
+def fit(pos_sample, neg_sample, vocab, config, output_dir):
+    global prev_embd
+
+    def trec_eval(embeddings):
         logger.info('TREC model building...')
         baseline_f = pd.read_csv(config['input_files']['baseline_f'])
-        trec = TREC_data_prep(model=model, vocab=vocab)
+        trec = TREC_data_prep(embeddings=embeddings, vocab=vocab)
         baseline_f = mp(
             df=baseline_f, func=trec.pipeline, num_partitions=20)
         baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)
@@ -95,16 +110,36 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
         # p.close()
         # p.join()
 
-        yn = [0]*size
+        yn = [0] * size
         Xn = torch.tensor(Xn, device=device)
         yn = torch.tensor(yn, dtype=torch.float, device=device)
         return Xn, yn.reshape((-1, 1))
 
     Xp, yp = pos_sample
     # Xn, yn = neg_sample
-    train_writer, test_writer = writers
+    args, config = config
+    train_writer = make_writer(output_dir, 'train', config)
+    test_writer = make_writer(output_dir, 'test', config)
     epochs = config['model_params']['epochs']
     model_name = os.path.join(output_dir, config['model_props']['model_name'])
+
+    device = torch.device(f"cuda:{config['gpu']}")
+    model = models.create_model(
+        config['model_props']['type'],
+        params=(
+            len(vocab),
+            config['model_params']['embedding_dim'],
+            device
+        )
+    )
+    if args.use_checkpoint is not None:
+        model.load_state_dict(torch.load(args.use_checkpoint))
+        logger.info('Using checkpoint from : {}'.format(args.use_checkpoint))
+    else:
+        logger.info('Using fresh model')
+    model = model.to(device)
+    loss_fn = nn.BCELoss()
+    opt = optim.Adam(model.parameters(), lr=config['model_params']['opt_lr'])
 
     # train_writer.add_graph(model, torch.ones(
     #     [1, 50, 10, 20], dtype=torch.long, device=device))
@@ -164,16 +199,19 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
         # train_dataset_n = T2VDataset(Xn_, yn_, vocab, device, config)
         # train_dataset = ConcatDataset([train_dataset_p, train_dataset_n])
         dataloader = DataLoader(
-            train_dataset_p, batch_size=config['model_params']['batch_size'], shuffle=True)
+            train_dataset_p,
+            batch_size=config['model_params']['batch_size'],
+            shuffle=True,
+        )
 
-        for X_batch, y_batch in tqdm(dataloader):
+        for index, (X_batch, y_batch) in enumerate(tqdm(dataloader)):
             all_tables = X_batch
             Xn, yn = generate_neg(len(X_batch))
             total_inputs = torch.cat((X_batch, Xn), dim=0)
             y_batch_total = torch.cat((y_batch, yn), dim=0)
-            # shuffle = torch.randperm(len(total_inputs))
-            # total_inputs = total_inputs[shuffle]
-            # y_batch_total = y_batch_total[shuffle]
+            shuffle = torch.randperm(len(total_inputs))
+            total_inputs = total_inputs[shuffle]
+            y_batch_total = y_batch_total[shuffle]
 
             y_pred = model(total_inputs)
             loss = loss_fn(y_pred, y_batch_total)
@@ -184,6 +222,14 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
             loss.backward()
             opt.step()
             loss_per_epoch += loss.item()
+
+            if index % config['model_props']['print_every'] == 0:
+                logger.info(f'TRAIN: {index}')
+                logger.info(
+                    f"INPUT TABLE:\n{print_table(total_inputs[0].cpu().data.numpy(),vocab)}")
+                logger.info(
+                    f'GOLD LABEL: {y_batch_total[0].cpu().data.numpy()}')
+                logger.info(f'PREDICTED LABEL: {y_p[0].cpu().data.numpy()}\n')
 
         accuracy = accuracy_score(y_actual_train, y_pred_train)
         precision = precision_score(y_actual_train, y_pred_train)
@@ -217,7 +263,10 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
         # test_dataset_n = T2VDataset(Xn_, yn_, vocab, device, config)
         # test_dataset = ConcatDataset([test_dataset_p, test_dataset_n])
         dataloader = DataLoader(
-            test_dataset_p, batch_size=config['model_params']['batch_size'], shuffle=True)
+            test_dataset_p,
+            batch_size=config['model_params']['batch_size'],
+            shuffle=True,
+        )
 
         for X_batch, y_batch in tqdm(dataloader):
 
@@ -225,9 +274,9 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
             Xn, yn = generate_neg(len(X_batch))
             total_inputs = torch.cat((X_batch, Xn), dim=0)
             y_batch_total = torch.cat((y_batch, yn), dim=0)
-            # shuffle = torch.randperm(len(total_inputs))
-            # total_inputs = total_inputs[shuffle]
-            # y_batch_total = y_batch_total[shuffle]
+            shuffle = torch.randperm(len(total_inputs))
+            total_inputs = total_inputs[shuffle]
+            y_batch_total = y_batch_total[shuffle]
 
             y_pred = model(total_inputs)
             loss = loss_fn(y_pred, y_batch_total)
@@ -235,6 +284,14 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
             y_p = torch.round(y_pred)
             y_pred_test += list(y_p.cpu().data.numpy())
             loss_per_epoch += loss.item()
+
+            if index % config['model_props']['print_every'] == 0:
+                logger.info(f'TEST: {index}')
+                logger.info(
+                    f"INPUT TABLE:\n{print_table(total_inputs[0].cpu().data.numpy(),vocab)}")
+                logger.info(
+                    f'GOLD LABEL: {y_batch_total[0].cpu().data.numpy()}')
+                logger.info(f'PREDICTED LABEL: {y_p[0].cpu().data.numpy()}\n')
 
         accuracy = accuracy_score(y_actual_test, y_pred_test)
         precision = precision_score(y_actual_test, y_pred_test)
@@ -249,8 +306,17 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
         logger.info(
             f"Testing - Loss : {loss_per_epoch}, Accuracy : {accuracy}, Precision : {precision}, Recall : {recall}, F1-score : {f1}")
 
+        embeddings = model.embeddings
+        if prev_embd is None:
+            prev_embd = embeddings.weight.cpu()
+        else:
+            curr_embd = embeddings.weight.cpu()
+            logger.info(
+                f"Are the embeddings same as the previous one? -> {torch.equal(prev_embd,curr_embd)}")
+            prev_embd = curr_embd
+
         if config['trec']['compute']:
-            ndcg_score, ndcg_score_dict = trec_eval(model)
+            ndcg_score, ndcg_score_dict = trec_eval(embeddings)
             logger.info(f"\n{ndcg_score}")
             for ndcg_type in ndcg_score_dict.keys():
                 train_writer.add_scalar(
@@ -261,23 +327,28 @@ def fit(model, pos_sample, neg_sample, vocab, loss_fn, opt, config, output_dir, 
                     ndcg_scores_total[ndcg_type].append(
                         ndcg_score_dict[ndcg_type])
 
-        end_time_epoch = time.time()-start_time_epoch
+        end_time_epoch = time.time() - start_time_epoch
         logger.info(f"Time spent in this epoch : {end_time_epoch}\n")
 
         train_writer.flush()
         test_writer.flush()
+        torch.save(model.state_dict(), os.path.join(
+            output_dir, f"model_{epoch}.pt"))
 
-    end_time_total = time.time()-start_time_total
+    end_time_total = time.time() - start_time_total
     logger.info(f"Time spent total : {end_time_total}\n")
     torch.save(model.state_dict(), model_name)
     # plot_ndcg_epochs(ndcg_scores_total, output_dir, config)
 
+    train_writer.close()
+    test_writer.close()
+
 
 def make_writer(output_dir, writer_type, config):
     path = os.path.join(output_dir, config['model_props']['viz_path'])
-    utils.make_dirs(path)
+    make_dirs(path)
     path = os.path.join(path, writer_type)
-    utils.make_dirs(path)
+    make_dirs(path)
     return SummaryWriter(log_dir=path, comment=config['comment'])
 
 
