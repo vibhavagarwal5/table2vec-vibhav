@@ -4,7 +4,6 @@ import time
 
 import numpy as np
 import torch
-from torch.multiprocessing import Pool
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
@@ -13,17 +12,9 @@ from utils import Config, loadpkl, savepkl
 
 
 class T2VDataset(Dataset):
-    def __init__(self, X, y, vocab, device, config):
-        self.config = config
-        self.table_prep_params = config['table_prep_params']
-        self.vocab = vocab
-
-        # X = X.tolist()
-        # for i in range(len(X)):
-        #     X[i] = self.pad_table(X[i], '<PAD>')
-        # X = self.table_words2index(X)
-        # print(np.array(X).shape)
-
+    def __init__(self, X, y, vocab, device, config, run_pipe=False):
+        if run_pipe:
+            X = self.pipe(X, vocab, config)
         self.X = torch.tensor(X, device=device)
         self.y = torch.tensor(y.tolist(), device=device, dtype=torch.float)
 
@@ -31,7 +22,21 @@ class T2VDataset(Dataset):
         return len(self.X)
 
     def __getitem__(self, idx):
-        return self.X[idx], self.y[idx]
+        return self.X[idx], self.y[idx], idx
+
+    def pipe(self, X, vocab, config):
+        X = X.tolist()
+        for i in range(len(X)):
+            X[i] = T2VDataset.pad_table(
+                config['table_prep_params'],
+                X[i],
+                '<PAD>'
+            )
+        X = T2VDataset.table_words2index(vocab, X)
+        return X
+
+    def return_all(self):
+        return self.X, self.y
 
     @staticmethod
     def pad_table(table_prep_params, table, val):
@@ -119,7 +124,7 @@ if __name__ == '__main__':
 
         temp = args.xp_file.split('.')
         temp[0] = temp[0] + '_pad_1'
-        # savepkl(os.path.join(Xp_path, '.'.join(temp)), X)
+        savepkl(os.path.join(Xp_path, '.'.join(temp)), X)
     else:
         config = Config()
         device = torch.device(

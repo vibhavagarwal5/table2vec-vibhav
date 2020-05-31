@@ -2,7 +2,6 @@ import argparse
 import logging
 import os
 import time
-from multiprocessing import Pool
 
 import numpy as np
 import pandas as pd

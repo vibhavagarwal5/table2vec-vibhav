@@ -2,8 +2,9 @@
 output = "./output"
 
 [input_files]
-Xp_path = "./data/w_all_data/x_tokenised_preprocessed_pad_1.pkl"
-vocab_path = "./data/w_all_data/vocab_5-15_1.pkl"
+Xp_path = "./data/w_all_data/x_tokenised_preprocessed_pad_unk.pkl"
+Xp_unpad_path = "./data/w_all_data/x_tokenised_preprocessed.pkl"
+vocab_path = "./data/w_all_data/vocab_5-15_unk.pkl"
 baseline_f = './data/w_all_data/baseline_f_tq-tkn.csv'
 
 [table_prep_params]
@@ -20,8 +21,7 @@ opt_lr = 1e-5
 
 [model_props]
 viz_path = 'viz'
-model_name = "model.pt"
-print_every = 700
+print_every = 500
 
 [trec]
 trec_path = '../trec_eval/trec_eval'
