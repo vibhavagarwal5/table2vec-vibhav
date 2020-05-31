@@ -17,7 +17,7 @@ logger = logging.getLogger("app")
 
 def make_dirs(d):
     if not os.path.exists(d):
-        os.makedirs(d)
+        os.makedirs(d, exist_ok=True)
 
 
 def setup_loggers(output_dir):
@@ -48,6 +48,7 @@ def load_config_args(args):
 
     config.add_to_config("comment", args.comment)
     config.add_to_config("gpu", args.gpu)
+    config.add_to_config("distributed", args.distributed)
     config['model_props']['type'] = args.model_type
     config.add_to_config("model_props", config['model_props'])
     return config

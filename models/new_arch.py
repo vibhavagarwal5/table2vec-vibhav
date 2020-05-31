@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-# from torch.multiprocessing import Pool
 from torch.nn.init import xavier_normal_, xavier_uniform_
 from torchsummary import summary
 
@@ -26,7 +25,7 @@ class Table2Vec(nn.Module):
         self.bn1 = nn.BatchNorm2d(128)
         self.drop1 = nn.Dropout(0.5)
         # self.fc1 = nn.Linear(embedding_dim*11*3, 256)
-        self.fc2 = nn.Linear(128*4*1, 128)
+        self.fc2 = nn.Linear(128 * 4 * 1, 128)
         self.fc3 = nn.Linear(128, 64)
         self.fc4 = nn.Linear(64, 1)
 

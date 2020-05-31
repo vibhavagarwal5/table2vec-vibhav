@@ -1,5 +1,4 @@
 import numpy as np
-from multiprocessing import Pool
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
