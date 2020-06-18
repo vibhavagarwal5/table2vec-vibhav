@@ -108,8 +108,18 @@ def mp(df, func, num_partitions):
     return df
 
 
-def print_table(table):
-    for row in table:
-        for col in row:
-            print(col)
-        print()
+def print_tableIDs(table, vocab, logger_print='print'):
+    print_fn = logger.info if logger_print == 'logger' else print
+    i2w = {i: w for i, w in enumerate(vocab)}
+    table = table.tolist()
+    for r in table:
+        for c in r:
+            for i, w in enumerate(c):
+                c[i] = i2w[int(w)]
+        print_fn(r)
+
+
+def print_table(table, logger_print='print'):
+    print_fn = logger.info if logger_print == 'logger' else print
+    for r in table:
+        print_fn(r)

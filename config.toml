@@ -10,14 +10,14 @@ baseline_f = './data/w_all_data/baseline_f_tq-tkn.csv'
 [table_prep_params]
 MAX_COL_LEN = 5
 MAX_ROW_LEN = 15
-LENGTH_PER_CELL = 20
+# LENGTH_PER_CELL = 20
 
 [model_params]
 seed = 42
-batch_size = 64
+batch_size = 128
 embedding_dim = 100
-epochs = 5
-opt_lr = 1e-5
+epochs = 15
+opt_lr = 3e-4
 
 [model_props]
 viz_path = 'viz'
@@ -29,4 +29,4 @@ query_file_path = '../global_data/qrels.txt'
 folder_name = "TREC_results"
 file_name = 'LTR_k5_'
 semantic_f = true
-compute = true
+compute = false

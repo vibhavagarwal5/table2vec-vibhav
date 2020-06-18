@@ -45,7 +45,7 @@ class TREC_data_prep():
         for i in range(len(inp)):
             # print(np.array(inp[i]).shape, inp[i])
             inp[i] = T2VDataset.pad_table(
-                self.config['table_prep_params'], inp[i], '<PAD>')
+                self.config['table_prep_params'], inp[i])
         inp = T2VDataset.table_words2index(self.vocab, inp)
         return np.array(inp)
 

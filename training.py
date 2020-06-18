@@ -1,5 +1,4 @@
 import argparse
-import copy
 import logging
 import os
 import random
@@ -23,24 +22,60 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 import models
-from dataset import T2VDataset
+from dataset import T2VDataset, collate_fn
 from trec import TREC_data_prep, TREC_model
 from TREC_score import ndcg_pipeline
-from utils import (flatten_1_deg, loadpkl, make_dirs, mp, savepkl,
-                   setup_simulation)
+from utils import (flatten_1_deg, loadpkl, make_dirs, mp, print_tableIDs,
+                   savepkl, setup_simulation)
 
 logger = logging.getLogger("app")
 prev_embd = None
 
 
-def print_table(table, vocab):
-    i2w = {i: w for i, w in enumerate(vocab)}
-    table = table.tolist()
-    for r in table:
-        for c in r:
-            for i, w in enumerate(c):
-                c[i] = i2w[int(w)]
-        logger.info(r)
+class EarlyStopping:
+    """Early stops the training if validation loss doesn't improve after a given patience."""
+
+    def __init__(self, patience=7, verbose=False, delta=0):
+        """
+        Args:
+            patience (int): How long to wait after last time validation loss improved.
+                            Default: 7
+            verbose (bool): If True, prints a message for each validation loss improvement.
+                            Default: False
+            delta (float): Minimum change in the monitored quantity to qualify as an improvement.
+                            Default: 0
+        """
+        self.patience = patience
+        self.verbose = verbose
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        self.val_loss_min = np.Inf
+        self.delta = delta
+
+    def __call__(self, val_loss, model, path='checkpoint.pt'):
+        score = -val_loss
+        if self.best_score is None:
+            self.best_score = score
+            self.save_checkpoint(val_loss, model, path)
+        elif score < self.best_score + self.delta:
+            self.counter += 1
+            logger.info(
+                f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.save_checkpoint(val_loss, model, path)
+            self.counter = 0
+
+    def save_checkpoint(self, val_loss, model, path):
+        '''Saves model when validation loss decrease.'''
+        if self.verbose:
+            logger.info('Validation loss decreased ({0} --> {1}).  Saving model ...'.format(
+                self.val_loss_min, val_loss))
+        torch.save(model.state_dict(), path)
+        self.val_loss_min = val_loss
 
 
 def make_writer(output_dir, writer_type, config):
@@ -62,72 +97,7 @@ def plot_ndcg_epochs(ndcg_scores_total, output_dir, config):
     plt.savefig(os.path.join(path, 'ndcg_compare.png'))
 
 
-class NegSample():
-    def __init__(self, all_tables, config):
-        self.all_tables = all_tables
-        self.config = config
-        self.table_prep_params = config['table_prep_params']
-
-    def generate_rand_cell(self, table, table_lst):
-        def get_rand_table():
-            rand_table_name = random.choice(range(len(self.all_tables)))
-            t_d = self.all_tables[rand_table_name]
-            return t_d, rand_table_name
-
-        table_data, table_name = get_rand_table()
-        numDataRows, numCols = np.array(table_data).shape[:2]
-        rand_row_ix = random.choice(list(range(numDataRows)))
-        rand_col_ix = random.choice(list(range(numCols)))
-        rand_cell = table_data[rand_row_ix][rand_col_ix]
-
-        if rand_cell == '<UNK>' and random.random() < 0.6:
-            rand_cell, table_name = self.generate_rand_cell(table, table_lst)
-
-        # while (
-        #     # True
-        #     # rand_cell in flatten_1_deg(table) or
-        #     # table_name in table_lst or
-        #     rand_cell.count(1) == len(rand_cell)
-        # ):
-        #     # if table_name in table_lst:
-        #     #     return generate_rand_cell(table, table_lst)
-        #     # elif rand_cell.count(1) == len(rand_cell):
-        #     #     rand_row_ix = random.choice(list(range(numDataRows)))
-        #     #     rand_col_ix = random.choice(list(range(numCols)))
-        #     #     rand_cell = table_data[rand_row_ix][rand_col_ix]
-        #     # else:
-        #     #     break
-        #     # print('sample table again coz repeat')
-        #     rand_cell, table_name = generate_rand_cell(table, table_lst)
-        return rand_cell, table_name
-
-    def generate_neg_table(self, inp):
-        t_l = []
-        t = []
-        row_sh, col_sh = np.array(inp).shape[:2]
-        self.table_prep_params = {
-            'MAX_ROW_LEN': row_sh,
-            'MAX_COL_LEN': col_sh,
-        }
-        for i in range(self.table_prep_params['MAX_ROW_LEN']):
-            r = []
-            for j in range(self.table_prep_params['MAX_COL_LEN']):
-                c, t_name = self.generate_rand_cell(t, t_l)
-                r.append(c)
-                t_l.append(t_name)
-            t.append(r)
-        return t
-
-    def generate_neg(self, vocab, device):
-        size = len(self.all_tables)
-        Xn = [self.generate_neg_table(table) for table in self.all_tables]
-        yn = np.ones((size, 1)) * 0
-        Xn, yn = T2VDataset(np.array(copy.deepcopy(Xn)), yn, vocab, device,
-                            self.config, run_pipe=True).return_all()
-        return Xn, yn
-
-
-def fit(config, output_dir):
+def train(config, output_dir):
     def trec_eval(embeddings):
         logger.info('TREC model building...')
         baseline_f = pd.read_csv(config['input_files']['baseline_f'])
@@ -168,7 +138,7 @@ def fit(config, output_dir):
     test_writer = make_writer(output_dir, 'test', config)
     ndcg_scores_total = {}
     epochs = config['model_params']['epochs']
-    batch_size = config['model_params']['batch_size']
+    batch_size = int(config['model_params']['batch_size'] / 2)
     # DistributedDataParallel
     if args.distributed:
         device = torch.device(f"cuda:{args.local_rank}")
@@ -183,12 +153,7 @@ def fit(config, output_dir):
     # Model, loss, opt creation
     model = models.create_model(
         config['model_props']['type'],
-        params=(
-            len(vocab),
-            config['model_params']['embedding_dim'],
-            device
-        )
-    )
+        params=(len(vocab), config['model_params']['embedding_dim']))
     # Use checkpoint load if specified
     if args.use_checkpoint is not None:
         model.load_state_dict(torch.load(args.use_checkpoint))
@@ -198,13 +163,16 @@ def fit(config, output_dir):
     model = model.to(device)
     loss_fn = nn.BCELoss()
     opt = optim.Adam(model.parameters(), lr=config['model_params']['opt_lr'])
+    scheduler = optim.lr_scheduler.MultiplicativeLR(opt,
+                                                    lr_lambda=lambda epoch: 0.66)
     # DistributedDataParallel
     if args.distributed:
-        model = DistributedDataParallel(
-            model, device_ids=[args.local_rank], output_device=args.local_rank)
+        model = DistributedDataParallel(model,
+                                        device_ids=[args.local_rank],
+                                        output_device=args.local_rank)
 
     # Creating +ve dataset
-    dataset_p = T2VDataset(Xp, yp, vocab, device, config)
+    dataset_p = T2VDataset(Xp, yp, vocab, config)
 
     # Splitting the +ve dataset into train and test sets
     train_size = int(0.7 * len(dataset_p))
@@ -215,149 +183,161 @@ def fit(config, output_dir):
     #     Xp, yp, range(len(Xp)), train_size=0.7, random_state=config['model_params']['seed'])
     # X_train_unpad, X_test_unpad = Xp_unpad[idx_train], Xp_unpad[idx_test]
 
+    # Creating training dataloader
+    sampler_train = None
+    if args.distributed:
+        sampler_train = DistributedSampler(train_dataset_p)
+    dataloader_train = DataLoader(train_dataset_p,
+                                  batch_size=batch_size,
+                                  shuffle=(sampler_train is None),
+                                  sampler=sampler_train,
+                                  collate_fn=lambda batch: collate_fn(batch, Xp_unpad,
+                                                                      config, vocab))
+
+    # Creating testing dataloader
+    sampler_test = None
+    if args.distributed:
+        sampler_test = DistributedSampler(test_dataset_p)
+    dataloader_test = DataLoader(test_dataset_p,
+                                 batch_size=batch_size,
+                                 shuffle=(sampler_test is None),
+                                 sampler=sampler_test,
+                                 collate_fn=lambda batch: collate_fn(batch, Xp_unpad,
+                                                                     config, vocab))
+
+    early_stopping = EarlyStopping(patience=3,
+                                   verbose=True)
     start_time_total = time.time()
-    for epoch in range(epochs):
+    for epoch in range(1, epochs + 1):
         start_time_epoch = time.time()
 
-        '''
-        Training
-        '''
-        loss_per_epoch = 0
-        y_actual_train = list()
-        y_pred_train = list()
-
-        # Creating training dataloader
-        sampler = None
-        if args.distributed:
-            sampler = DistributedSampler(train_dataset_p)
-
-        dataloader = DataLoader(train_dataset_p,
-                                batch_size=batch_size,
-                                shuffle=(sampler is None),
-                                sampler=sampler)
-
-        for index, (X_batch, y_batch, idx) in enumerate(tqdm(dataloader)):
-            X_batch_unpad = Xp_unpad[idx]
-            Xn, yn = NegSample(
-                X_batch_unpad, config).generate_neg(vocab, device)
-            total_inputs = torch.cat((X_batch, Xn), dim=0)
-            y_batch_total = torch.cat((y_batch, yn), dim=0)
-            shuffle = torch.randperm(len(total_inputs))
-            total_inputs = total_inputs[shuffle]
-            y_batch_total = y_batch_total[shuffle]
-
-            y_pred = model(total_inputs)
-            loss = loss_fn(y_pred, y_batch_total)
-            y_actual_train += list(y_batch_total.cpu().data.numpy())
+        ''' Training '''
+        loss_per_epoch = []
+        correct = 0
+        for index, (X_batch, y_batch, _) in enumerate(tqdm(dataloader_train)):
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            y_pred = model(X_batch)
+            loss = loss_fn(y_pred, y_batch)
             y_p = torch.round(y_pred)
-            y_pred_train += list(y_p.cpu().data.numpy())
+            correct += (y_p == y_batch).float().sum()
             opt.zero_grad()
             loss.backward()
             opt.step()
-            loss_per_epoch += loss.item()
+            loss_per_epoch.append(loss.item())
 
             if index % config['model_props']['print_every'] == 0:
-                logger.info(f"Epoch: {epoch+1}/{epochs}")
+                logger.info(f"Epoch: {epoch}/{epochs}")
                 logger.info(f'TRAIN: {index}')
-                logger.info(
-                    f"INPUT TABLE:\n{print_table(total_inputs[0].cpu().data.numpy(),vocab)}")
-                logger.info(
-                    f'GOLD LABEL: {y_batch_total[0].cpu().data.numpy()}')
-                logger.info(f'PREDICTED LABEL: {y_p[0].cpu().data.numpy()}\n')
-                step = epoch * (len(train_dataset_p) / batch_size) + index
-                accuracy_batch = accuracy_score(y_batch_total.cpu().data.numpy(),
-                                                y_p.cpu().data.numpy())
-                train_writer.add_scalar('Batch_lvl/Loss', loss.item(), step)
-                train_writer.add_scalar(
-                    'Batch_lvl/Accuracy', accuracy_batch, step)
+                logger.info("INPUT TABLE:\n{0}".format(
+                    print_tableIDs(X_batch[0], vocab, 'logger')))
+                logger.info('GOLD LABEL: {0}'.format(y_batch[0].item()))
+                logger.info('PREDICTED LABEL: {0}'.format(y_p[0].item()))
+                step = epoch * len(dataloader_train) + index
+                accuracy_batch = 100 * correct.item() / ((index + 1) * len(y_batch))
+                logger.info('Accuracy: {0}\n'.format(accuracy_batch))
+                train_writer.add_scalar('Batch_lvl/Loss',
+                                        np.average(loss_per_epoch), step)
+                train_writer.add_scalar('Batch_lvl/Accuracy',
+                                        accuracy_batch, step)
 
-        accuracy = accuracy_score(y_actual_train, y_pred_train)
-        train_writer.add_scalar('Loss', loss_per_epoch, epoch)
+        accuracy = 100 * correct.item() / (len(y_batch) * len(dataloader_train))
+        train_writer.add_scalar('Loss', np.average(loss_per_epoch), epoch)
         train_writer.add_scalar('Accuracy', accuracy, epoch)
-        logger.info(
-            f"Training - Epoch: {epoch+1}, Loss: {loss_per_epoch}, Accuracy: {accuracy}")
+        logger.info("Training - Epoch: {0}, Loss: {1}, Accuracy: {2}".format(
+            epoch, np.average(loss_per_epoch), accuracy))
 
-        '''
-        --------------------------------------------------------------------------------------
-        '''
+        '''--------------------------------------------------------------------------------------'''
 
-        '''
-        Testing
-        '''
-        loss_per_epoch = 0
-        y_actual_test = list()
-        y_pred_test = list()
+        ''' Testing '''
+        # loss_per_epoch, y_actual_test, y_pred_test = [], [], []
+        loss_per_epoch = []
+        correct = 0
+        for index, (X_batch, y_batch, _) in enumerate(tqdm(dataloader_test)):
+            #     # for index in tqdm(range(0, len(X_test), batch_size)):
+            #     # X_batch = X_test[index:index + batch_size]
+            #     # y_batch = y_test[index:index + batch_size]
+            #     # X_batch, y_batch = T2VDataset(
+            #     #     X_batch, y_batch, vocab, device, config).return_all()
+            #     X_batch_unpad = Xp_unpad[idx]
+            #     Xn, yn = NegSample(
+            #         X_batch_unpad, config).generate_neg(vocab, device)
+            #     total_inputs = torch.cat((X_batch, Xn), dim=0)
+            #     y_batch_total = torch.cat((y_batch, yn), dim=0)
+            #     shuffle = torch.randperm(len(total_inputs))
+            #     total_inputs = total_inputs[shuffle]
+            #     y_batch_total = y_batch_total[shuffle]
 
-        # Creating testing dataloader
-        sampler = None
-        if args.distributed:
-            sampler = DistributedSampler(test_dataset_p)
-
-        dataloader = DataLoader(test_dataset_p,
-                                batch_size=batch_size,
-                                shuffle=(sampler is None),
-                                sampler=sampler)
-
-        for index, (X_batch, y_batch, idx) in enumerate(tqdm(dataloader)):
-            # for index in tqdm(range(0, len(X_test), batch_size)):
-            # X_batch = X_test[index:index + batch_size]
-            # y_batch = y_test[index:index + batch_size]
-            # X_batch, y_batch = T2VDataset(
-            #     X_batch, y_batch, vocab, device, config).return_all()
-            X_batch_unpad = Xp_unpad[idx]
-            Xn, yn = NegSample(
-                X_batch_unpad, config).generate_neg(vocab, device)
-            total_inputs = torch.cat((X_batch, Xn), dim=0)
-            y_batch_total = torch.cat((y_batch, yn), dim=0)
-            shuffle = torch.randperm(len(total_inputs))
-            total_inputs = total_inputs[shuffle]
-            y_batch_total = y_batch_total[shuffle]
-
-            y_pred = model(total_inputs)
-            loss = loss_fn(y_pred, y_batch_total)
-            y_actual_test += list(y_batch_total.cpu().data.numpy())
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            y_pred = model(X_batch)
+            loss = loss_fn(y_pred, y_batch)
+            # y_actual_test += list(y_batch.cpu().data.numpy())
             y_p = torch.round(y_pred)
-            y_pred_test += list(y_p.cpu().data.numpy())
-            loss_per_epoch += loss.item()
+            correct += (y_p == y_batch).float().sum()
+            # y_pred_test += list(y_p.cpu().data.numpy())
+            loss_per_epoch.append(loss.item())
 
             if index % config['model_props']['print_every'] == 0:
-                logger.info(f"Epoch: {epoch+1}/{epochs}")
+                logger.info(f"Epoch: {epoch}/{epochs}")
                 logger.info(f'TEST: {index}')
-                logger.info(
-                    f"INPUT TABLE:\n{print_table(total_inputs[0].cpu().data.numpy(),vocab)}")
-                logger.info(
-                    f'GOLD LABEL: {y_batch_total[0].cpu().data.numpy()}')
-                logger.info(f'PREDICTED LABEL: {y_p[0].cpu().data.numpy()}\n')
+                logger.info("INPUT TABLE:\n{0}".format(
+                    print_tableIDs(X_batch[0], vocab, 'logger')))
+                logger.info('GOLD LABEL: {0}'.format(y_batch[0].item()))
+                logger.info('PREDICTED LABEL: {0}'.format(y_p[0].item()))
+                # logger.info("INPUT TABLE:\n{0}".format(
+                #     print_tableIDs(X_batch[0].cpu().data.numpy(),
+                #                    vocab, 'logger')))
+                # logger.info('GOLD LABEL: {0}'.format(
+                #     y_batch[0].cpu().data.numpy()))
+                # logger.info('PREDICTED LABEL: {0}\n'.format(
+                #     y_p[0].cpu().data.numpy()))
                 # step = (epoch * len(X_train) + index) / batch_size
-                step = epoch * (len(test_dataset_p) / batch_size) + index
-                accuracy_batch = accuracy_score(y_batch_total.cpu().data.numpy(),
-                                                y_p.cpu().data.numpy())
-                train_writer.add_scalar('Batch_lvl/Loss', loss.item(), step)
-                train_writer.add_scalar(
-                    'Batch_lvl/Accuracy', accuracy_batch, step)
+                step = epoch * len(dataloader_test) + index
+                # accuracy_batch = accuracy_score(y_batch.cpu().data.numpy(),
+                #                                 y_p.cpu().data.numpy())
+                accuracy_batch = 100 * correct.item() / ((index + 1) * len(y_batch))
+                logger.info('Accuracy: {0}\n'.format(accuracy_batch))
+                test_writer.add_scalar('Batch_lvl/Loss',
+                                       np.average(loss_per_epoch), step)
+                test_writer.add_scalar('Batch_lvl/Accuracy',
+                                       accuracy_batch, step)
 
-        accuracy = accuracy_score(y_actual_test, y_pred_test)
+        accuracy = 100 * correct.item() / (len(y_batch) * len(dataloader_train))
+        # accuracy = accuracy_score(y_actual_test, y_pred_test)
         # precision = precision_score(y_actual_test, y_pred_test)
         # recall = recall_score(y_actual_test, y_pred_test)
         # f1 = f1_score(y_actual_test, y_pred_test)
 
-        test_writer.add_scalar('Loss', loss_per_epoch, epoch)
+        test_writer.add_scalar('Loss', np.average(loss_per_epoch), epoch)
         test_writer.add_scalar('Accuracy', accuracy, epoch)
         # test_writer.add_scalar('F1', f1, epoch)
         # test_writer.add_scalar('Precision', precision, epoch)
         # test_writer.add_scalar('Recall', recall, epoch)
         # logger.info(
-        #     f"Testing - Loss : {loss_per_epoch}, Accuracy : {accuracy}, Precision : {precision}, Recall : {recall}, F1-score : {f1}")
-        logger.info(
-            f"Testing - Epoch: {epoch+1}, Loss: {loss_per_epoch}, Accuracy: {accuracy}")
+        #     f"Testing - Loss : {loss_per_epoch/len(dataloader_test)}, Accuracy : {accuracy}, Precision : {precision}, Recall : {recall}, F1-score : {f1}")
+        logger.info("Testing - Epoch: {0}, Loss: {1}, Accuracy: {2}".format(
+            epoch, np.average(loss_per_epoch), accuracy))
+
+        ''' After train and test loop...'''
+        early_stopping(np.average(loss_per_epoch), model,
+                       os.path.join(output_dir, f"model_{epoch}.pt"))
+        if early_stopping.early_stop:
+            logger.info(f"Early stopping at epoch:{epoch}")
+            break
+        if early_stopping.counter == 0:
+            for param_group in opt.param_groups:
+                logger.info("Intial LR:{0}".format(param_group['lr']))
+            scheduler.step()
+            for param_group in opt.param_groups:
+                logger.info("After scheduler update, LR:{0}".format(
+                    param_group['lr']))
 
         embeddings = model.embeddings
         if prev_embd is None:
-            prev_embd = embeddings.weight.cpu()
+            prev_embd = embeddings.weight
         else:
-            curr_embd = embeddings.weight.cpu()
-            logger.info(
-                f"Are the embeddings same as the previous one? -> {torch.equal(prev_embd,curr_embd)}")
+            curr_embd = embeddings.weight
+            logger.info("Are the embeddings same as the previous one? -> {0}".format(
+                torch.equal(prev_embd, curr_embd)))
             prev_embd = curr_embd
 
         if config['trec']['compute']:
@@ -377,15 +357,11 @@ def fit(config, output_dir):
 
         train_writer.flush()
         test_writer.flush()
-        torch.save(model.state_dict(), os.path.join(
-            output_dir, f"model_{epoch}.pt"))
 
-    torch.save(model.state_dict(), os.path.join(
-        output_dir, 'model_state_dict.pt'))
-    torch.save(model, os.path.join(
-        output_dir, 'model.pt'))
+    # torch.save(model, os.path.join(output_dir, 'model.pt'))
     end_time_total = time.time() - start_time_total
-    logger.info(f"Time spent total : {str(end_time_total/3600)} hrs\n")
+    logger.info("Time spent total : {0} hrs\n".format(
+        str(end_time_total / 3600)))
     # plot_ndcg_epochs(ndcg_scores_total, output_dir, config)
 
     train_writer.close()
@@ -422,6 +398,7 @@ if __name__ == '__main__':
     random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
 
     logger.info(f"python {' '.join(sys.argv)}")
-    fit(config=(args, config), output_dir=output_dir)
+    train(config=(args, config), output_dir=output_dir)

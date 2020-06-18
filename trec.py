@@ -13,7 +13,6 @@ from tqdm import tqdm
 from xgboost import XGBClassifier
 
 import utils
-from data_preprocess2 import read_table, tokenize_str, tokenize_table, clean, shrink_cell_len
 from utils import Config, loadpkl, mp
 
 logger = logging.getLogger("app")
@@ -184,6 +183,8 @@ def get_args():
 
 
 if __name__ == '__main__':
+    from data_preprocess2 import read_table, tokenize_str, tokenize_table, clean, shrink_cell_len
+
     args = get_args()
     start_time = time.time()
 
@@ -213,8 +214,6 @@ if __name__ == '__main__':
         baseline_f = mp(
             df=baseline_f, func=trec.pipeline, num_partitions=20)
         baseline_f.drop(columns=['table_emb', 'query_emb'], inplace=True)
-        # baseline_f.to_csv('./baseline_f_tq-emb_temp.csv', index=False)
-        # baseline_f = pd.read_csv('./baseline_f_tq-emb_temp.csv')
 
         trec_path = os.path.join(output_dir, config['trec']['folder_name'])
         trec_model = TREC_model(

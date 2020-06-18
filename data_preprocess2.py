@@ -275,6 +275,22 @@ def generate_vocab(X):
     print(f'total vocab: {len(vocab)}\n')
     savepkl(
         f'{PATH}/vocab_{MAX_COL_LEN}-{MAX_ROW_LEN}.pkl', vocab)
+    return vocab
+
+
+def fillup_table_w2i(vocab, tables):
+    w2i = {w: i for i, w in enumerate(vocab)}
+    for t in tables:
+        for r in t:
+            for c in r:
+                if len(c) == 0:
+                    c.append('<UNK>')
+                for i, w in enumerate(c):
+                    try:
+                        c[i] = w2i[w]
+                    except:
+                        c[i] = w2i['<UNK>']
+    return tables
 
 
 def table_shape_stats(X):
@@ -355,7 +371,7 @@ def remove_emptiness(X):
 #     return table
 
 
-def preprocess_pipeline(tables_subset, index):
+def preprocess_pipeline(tables_subset, index=''):
     savepkl(f'{PATH}/postive_tables_set_{index}.pkl', tables_subset)
     read_all_tables = [read_table(js)['data'] for js in tables_subset]
 
@@ -389,10 +405,12 @@ def preprocess_pipeline(tables_subset, index):
 
     for i, table in enumerate(X):
         X[i] = shrink_cell_len(table)
-    savepkl(f'{PATH}/x_tokenised_preprocessed_{index}.pkl', X)
 
-    # print("---Generating Vocab---\n\n")
-    # generate_vocab(X)
+    print("---Generating Vocab---\n")
+    vocab = generate_vocab(X)
+    X = fillup_table_w2i(vocab, X)
+
+    savepkl(f'{PATH}/x_tokenised_preprocessed_{index}.pkl', X)
 
 
 if __name__ == '__main__':
