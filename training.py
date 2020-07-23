@@ -164,7 +164,7 @@ def train(config, output_dir):
     loss_fn = nn.BCELoss()
     opt = optim.Adam(model.parameters(), lr=config['model_params']['opt_lr'])
     scheduler = optim.lr_scheduler.MultiplicativeLR(opt,
-                                                    lr_lambda=lambda epoch: 0.66)
+                                                    lr_lambda=lambda epoch: 0.5)
     # DistributedDataParallel
     if args.distributed:
         model = DistributedDataParallel(model,
@@ -205,7 +205,7 @@ def train(config, output_dir):
                                  collate_fn=lambda batch: collate_fn(batch, Xp_unpad,
                                                                      config, vocab))
 
-    early_stopping = EarlyStopping(patience=3,
+    early_stopping = EarlyStopping(patience=5,
                                    verbose=True)
     start_time_total = time.time()
     for epoch in range(1, epochs + 1):
@@ -219,7 +219,7 @@ def train(config, output_dir):
             y_pred = model(X_batch)
             loss = loss_fn(y_pred, y_batch)
             y_p = torch.round(y_pred)
-            correct += (y_p == y_batch).float().sum()
+            correct += (y_p == y_batch).float().sum() / len(y_batch)
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -233,14 +233,14 @@ def train(config, output_dir):
                 logger.info('GOLD LABEL: {0}'.format(y_batch[0].item()))
                 logger.info('PREDICTED LABEL: {0}'.format(y_p[0].item()))
                 step = epoch * len(dataloader_train) + index
-                accuracy_batch = 100 * correct.item() / ((index + 1) * len(y_batch))
+                accuracy_batch = 100 * correct.item() / (index + 1)
                 logger.info('Accuracy: {0}\n'.format(accuracy_batch))
                 train_writer.add_scalar('Batch_lvl/Loss',
                                         np.average(loss_per_epoch), step)
                 train_writer.add_scalar('Batch_lvl/Accuracy',
                                         accuracy_batch, step)
 
-        accuracy = 100 * correct.item() / (len(y_batch) * len(dataloader_train))
+        accuracy = 100 * correct.item() / len(dataloader_train)
         train_writer.add_scalar('Loss', np.average(loss_per_epoch), epoch)
         train_writer.add_scalar('Accuracy', accuracy, epoch)
         logger.info("Training - Epoch: {0}, Loss: {1}, Accuracy: {2}".format(
@@ -272,7 +272,7 @@ def train(config, output_dir):
             loss = loss_fn(y_pred, y_batch)
             # y_actual_test += list(y_batch.cpu().data.numpy())
             y_p = torch.round(y_pred)
-            correct += (y_p == y_batch).float().sum()
+            correct += (y_p == y_batch).float().sum() / len(y_batch)
             # y_pred_test += list(y_p.cpu().data.numpy())
             loss_per_epoch.append(loss.item())
 
@@ -294,14 +294,14 @@ def train(config, output_dir):
                 step = epoch * len(dataloader_test) + index
                 # accuracy_batch = accuracy_score(y_batch.cpu().data.numpy(),
                 #                                 y_p.cpu().data.numpy())
-                accuracy_batch = 100 * correct.item() / ((index + 1) * len(y_batch))
+                accuracy_batch = 100 * correct.item() / (index + 1)
                 logger.info('Accuracy: {0}\n'.format(accuracy_batch))
                 test_writer.add_scalar('Batch_lvl/Loss',
                                        np.average(loss_per_epoch), step)
                 test_writer.add_scalar('Batch_lvl/Accuracy',
                                        accuracy_batch, step)
 
-        accuracy = 100 * correct.item() / (len(y_batch) * len(dataloader_train))
+        accuracy = 100 * correct.item() / len(dataloader_test)
         # accuracy = accuracy_score(y_actual_test, y_pred_test)
         # precision = precision_score(y_actual_test, y_pred_test)
         # recall = recall_score(y_actual_test, y_pred_test)
@@ -323,7 +323,7 @@ def train(config, output_dir):
         if early_stopping.early_stop:
             logger.info(f"Early stopping at epoch:{epoch}")
             break
-        if early_stopping.counter == 0:
+        if early_stopping.counter != 0:
             for param_group in opt.param_groups:
                 logger.info("Intial LR:{0}".format(param_group['lr']))
             scheduler.step()

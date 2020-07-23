@@ -13,9 +13,8 @@ from utils import flatten_1_deg, loadpkl, savepkl
 
 class Table2Vec(nn.Module):
 
-    def __init__(self, vocab_size, embedding_dim, device):
+    def __init__(self, vocab_size, embedding_dim):
         super(Table2Vec, self).__init__()
-        self.device = device
         self.embeddings = nn.Embedding(vocab_size, embedding_dim)
         self.embeddings.weight.requires_grad = True
         xavier_normal_(self.embeddings.weight.data)

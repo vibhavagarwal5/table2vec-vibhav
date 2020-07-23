@@ -16,8 +16,8 @@ MAX_ROW_LEN = 15
 seed = 42
 batch_size = 128
 embedding_dim = 100
-epochs = 15
-opt_lr = 3e-4
+epochs = 40
+opt_lr = 6e-6
 
 [model_props]
 viz_path = 'viz'
