@@ -35,3 +35,7 @@ x_tokenized_preprocessed_qfix_pad_unk -> full padded and w2i x_tokenized_preproc
 vocab_5-15.pkl -> full vocab for that x_tokenized_preprocessed.pkl
 vocab_5-15_unk.pkl -> partial vocab (will cause unk tokens when w2i)
  -->
+ 
+ # Data and model files
+ 
+ You can find the data and model dumps to replicate our results through [this](https://drive.google.com/drive/folders/1UxtV_XOrrm31YcoXZYxj9jWpAZzbxLNK?usp=sharing) Google drive link.
